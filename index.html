@@ -1,2967 +1,3 @@
-
-Gemini との会話
-全部のストップウオッチを止めるボタンを作ってほしい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-ご提示いただいた全ての要件（mm:ss.00表記、LAP/SPLIT表示、START/STOP/LAP/個別RESET、P2Pリアルタイム共有、最大100個までの増減、Excel出力、全体リセット）に加え、新しく「稼働中のすべてのストップウォッチを同時に止めるボタン（■ 全体STOP）」を追加した完全版コードです。
-
-設定作業は一切不要で、ファイル1つでそのまま動作します。
-
-完全版コード (index.html)
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- 上部：一括操作ツールバー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURLを開いた端末同士でリアルタイム自動同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeLastTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 末尾の艇を減らす
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    // --- データ構造 ---
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード自動生成
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v4-${roomCode}`;
-
-    // --- P2P 通信制御 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- アクションの伝播と処理 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個までです");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- グローバル関数定義 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeLastTimer = () => dispatchAction({ type: 'REMOVE_LAST' });
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべてのタイム記録が削除されます）")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- フォーマット関数 (mm:ss.00) ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- Excel出力 ---
-    window.exportExcel = () => {
-      const rows = [];
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        if (laps.length === 0) {
-          rows.push({
-            "艇名": sw.name, "LAP": "-", "LAPタイム": "-", "SPLITタイム": formatTime(getElapsedTime(sw)), "記録時刻": "-"
-          });
-        } else {
-          laps.forEach((lap, idx) => {
-            rows.push({
-              "艇名": sw.name, "LAP": idx + 1, "LAPタイム": lap.lapTime, "SPLITタイム": lap.splitTime, "記録時刻": new Date(lap.timestamp).toLocaleTimeString()
-            });
-          });
-        }
-      });
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, `Rowing_Result_${new Date().toISOString().slice(0,10)}.xlsx`);
-    };
-
-    // --- 画面構築 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <!-- メインタイマー mm:ss.00 -->
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <!-- ボタンエリア（START/STOP, LAP, RESET） -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <!-- LAP / SPLIT 履歴一覧 -->
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // 数値の描画リフレッシュ
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) {
-            el.innerText = formatTime(getElapsedTime(sw));
-          }
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-一括操作・機能一覧
-■ 全体STOP: 稼働しているすべてのストップウォッチを一括で同時にストップさせます。
-
-▶ 選択艇を同時スタート: チェックボックスで選択した艇だけを同時にスタートさせます。
-
-+ 艇を追加 / - 末尾の艇を減らす: 画面上部からまとめて数を調整できます（最大100個制御、個別の「✕」ボタン削除も対応）。
-
-↺ 全体リセット: 全艇のタイム記録をゼロに戻します。
-
-個別RESET: ストップウォッチごとに個別に0表示に戻せます。
-
-「末尾の艇を減らす」ボタンを「艇削除」ボタンに変更してほしい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-ヘッダーの「末尾の艇を減らす」ボタンを「艇削除」ボタンに変更しました。
-
-チェックボックスで艇を選択している場合は選択した艇を一括削除し、選択していない場合は末尾の艇を1台削除する仕様にアップデートしています。（各カード右上の「✕」ボタンによる個別削除も継続して可能です）
-
-完全版コード (index.html)
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURLを開いた端末同士でリアルタイム自動同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    // --- データ構造 ---
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード自動生成
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v5-${roomCode}`;
-
-    // --- P2P 通信設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- アクションの伝播と実行 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個までです");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => {
-            delete state.stopwatches[swId];
-          });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- 操作関数の定義 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべての記録が消去されます）")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- フォーマット関数 (mm:ss.00) ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- Excel出力 ---
-    window.exportExcel = () => {
-      const rows = [];
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        if (laps.length === 0) {
-          rows.push({
-            "艇名": sw.name, "LAP": "-", "LAPタイム": "-", "SPLITタイム": formatTime(getElapsedTime(sw)), "記録時刻": "-"
-          });
-        } else {
-          laps.forEach((lap, idx) => {
-            rows.push({
-              "艇名": sw.name, "LAP": idx + 1, "LAPタイム": lap.lapTime, "SPLITタイム": lap.splitTime, "記録時刻": new Date(lap.timestamp).toLocaleTimeString()
-            });
-          });
-        }
-      });
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, `Rowing_Result_${new Date().toISOString().slice(0,10)}.xlsx`);
-    };
-
-    // --- UI構造描画 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <!-- mm:ss.00 表示 -->
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <!-- ボタンエリア（START/STOP, LAP, RESET） -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <!-- LAP / SPLIT 履歴 -->
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // 数値部分のリアルタイム更新
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) {
-            el.innerText = formatTime(getElapsedTime(sw));
-          }
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-書き出すエクセルファイルについて、１つのストップウオッチについて次のようにしてほしい
-
-ウォッチ１　LAP1　LAP2　LAP3・・・
-
-ウォッチ１　SPLIT1　SPLIT2　SPLIT3・・・
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-Excel出力仕様をご指定の「1つのストップウォッチにつきLAP行とSPLIT行の2行で横方向に展開する形式」に変更しました。ご提示いただいた全要件（mm:ss.00表示、LAP/SPLIT記録、START/STOP/LAP/RESET、複数人リアルタイムP2P共有、最大100艇の増減、Excel書き出し）を網羅した完全版コードです。
-
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURL（部屋コード付き）を開いた端末同士でリアルタイム同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    // --- データ状態 ---
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード制御
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v6-${roomCode}`;
-
-    // --- P2P リアルタイム同期設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- アクションの伝播と実行 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => {
-            delete state.stopwatches[swId];
-          });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- 操作関数の定義 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべての記録が消去されます）")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- タイムフォーマット (mm:ss.00) ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- 新：横持ちマトリクス形式のExcel出力 ---
-    window.exportExcel = () => {
-      const aoa = [];
-      
-      // 全艇の中で最大のLAP数を取得
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      // ヘッダー行を作成（艇名, 項目, LAP1, LAP2, LAP3...）
-      const header = ['艇名', '項目'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
-      }
-      aoa.push(header);
-
-      // 各ストップウォッチごとに2行（LAP行・SPLIT行）を出力
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        
-        const lapRow = [sw.name, 'LAP'];
-        const splitRow = [sw.name, 'SPLIT'];
-
-        if (laps.length === 0) {
-          lapRow.push('-');
-          splitRow.push(formatTime(getElapsedTime(sw)));
-        } else {
-          laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
-          });
-        }
-
-        aoa.push(lapRow);
-        aoa.push(splitRow);
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, `Rowing_Result_${new Date().toISOString().slice(0,10)}.xlsx`);
-    };
-
-    // --- UI構造描画 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <!-- mm:ss.00 タイム表示 -->
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <!-- 操作ボタン（START/STOP, LAP, RESET） -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <!-- LAP / SPLIT 画面内リスト表示 -->
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // タイマー表示数値のリアルタイム描画リフレッシュ
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) {
-            el.innerText = formatTime(getElapsedTime(sw));
-          }
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-書き出されるExcelファイルの形式
-Excel出力 ボタンを押すと、以下のように1台につき2行（LAP行とSPLIT行）で横に伸びていくExcelシートが生成されます。
-
-艇名	項目	LAP 1	LAP 2	LAP 3	...
-ウォッチ 1	LAP	01:23.45	01:20.12	01:22.05	...
-ウォッチ 1	SPLIT	01:23.45	02:43.57	04:05.62	...
-ウォッチ 2	LAP	01:21.00	01:19.80	01:20.50	...
-ウォッチ 2	SPLIT	01:21.00	02:40.80	04:01.30	...
-ファイルを保存するときに名前を付けたい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-Excelファイルを書き出す際に、保存するファイル名を入力指定できるダイアログ（プロンプト）を表示する機能を追加しました。
-
-これまでの全機能（mm:ss.00表記、LAP/SPLIT横持ち出力、P2Pリアルタイム共有、最大100艇、各種一括操作ボタン）を網羅した完全版コードです。
-
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURL（部屋コード付き）を開いた端末同士でリアルタイム同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    // --- データ構造 ---
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード制御
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v7-${roomCode}`;
-
-    // --- P2P リアルタイム同期設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- アクションの伝播と実行 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => {
-            delete state.stopwatches[swId];
-          });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- 操作関数の定義 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべての記録が消去されます）")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- タイムフォーマット (mm:ss.00) ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- Excel出力 (ファイル名入力機能付き) ---
-    window.exportExcel = () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const defaultFileName = `Rowing_Result_${today}`;
-      
-      const userInput = prompt("保存するファイル名を入力してください（.xlsx は自動で付きます）:", defaultFileName);
-      
-      // キャンセルボタンが押された場合は処理中断
-      if (userInput === null) return;
-      
-      const fileName = userInput.trim() || defaultFileName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      const aoa = [];
-      
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      const header = ['艇名', '項目'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
-      }
-      aoa.push(header);
-
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        
-        const lapRow = [sw.name, 'LAP'];
-        const splitRow = [sw.name, 'SPLIT'];
-
-        if (laps.length === 0) {
-          lapRow.push('-');
-          splitRow.push(formatTime(getElapsedTime(sw)));
-        } else {
-          laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
-          });
-        }
-
-        aoa.push(lapRow);
-        aoa.push(splitRow);
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, finalFileName);
-    };
-
-    // --- UI構造描画 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <!-- mm:ss.00 表示 -->
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <!-- ボタンエリア（START/STOP, LAP, RESET） -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <!-- LAP / SPLIT 履歴 -->
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // 数値の描画更新
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) {
-            el.innerText = formatTime(getElapsedTime(sw));
-          }
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-作ったindex.htmlファイルをLINEを使って共有したい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-index.html ファイルのままLINEで送ると相手の端末で正しく動作しないため、無料のWebホスティングサービスで公開し、発行されたURLをLINEで送信するのが最も確実な方法です。
-
-ステップ1：Web上に無料公開する（おすすめ：Netlify Drop）
-会員登録不要で、ファイルをドラッグ＆ドロップするだけで即座にWeb公開できます。
-
-パソコンで Netlify Drop にアクセスします。
-
-作成した index.html ファイルを画面上にドラッグ＆ドロップします。
-
-数秒で専用のWebサイトURL（例: [https://xxxxxx.netlify.app](https://xxxxxx.netlify.app)）が発行されます。
-
-ステップ2：LINEで共有する
-発行されたURLの末尾に、計測用の部屋コード（例: #rowing123）を付けてコピーします。
-
-例：[https://xxxxxx.netlify.app/#rowing123](https://xxxxxx.netlify.app/#rowing123)
-
-コピーしたURLをLINEのトーク画面で送信します。
-
-⚠️ LINE共有時の重要な注意点
-LINEアプリ内でURLを直接タップすると「LINE内ブラウザ」で開かれ、Excelファイルのダウンロードが制限される場合があります。
-
-外部ブラウザ指定パラメータをつける（おすすめ）
-送信するURLの末尾に ?openExternalBrowser=1 を付与してLINEで送ると、自動的にSafariやChromeなどの外部ブラウザで開くよう促せます。
-
-例：[https://xxxxxx.netlify.app/?openExternalBrowser=1#rowing123](https://xxxxxx.netlify.app/?openExternalBrowser=1#rowing123)
-
-手動で開く場合
-LINEでURLを開いた後、画面右下の「点3つメニュー（…）」から 「デフォルトのブラウザで開く」（SafariまたはChrome）を選択するよう一緒に乗組員へ伝えておくと安心です。
-
-NetlifyDropでパスワードを聞かれるが、どうしたらいいかわからない
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-Netlify Dropでパスワードを求められるのは、不正利用防止のため無料会員登録（アカウント作成）が必須になったためです。
-
-先ほど作成したコードにはご要望の機能（mm:ss.00表記、LAP/SPLIT表示、START/STOP/LAP操作、P2Pリアルタイム同期、最大100艇の増減、ファイル名指定Excel出力）がすべて組み込まれていますので、以下のいずれかの方法でWeb上に公開・共有してください。
-
-方法1：Netlifyで無料アカウントを作る（推奨）
-
-パスワード入力画面の近くにある 「Sign Up」（新規登録）を選択します。
-
-Googleアカウント（「Continue with Google」）かメールアドレスを選択し、無料でアカウントを作成します。（クレジットカード等の登録は不要です）
-
-ログイン完了後、再度 index.html をドラッグ＆ドロップするとURLが発行されます。
-
-方法2：アカウント登録なしで公開できる代替サービスを使う
-
-会員登録やパスワード設定を行わずに即座にURL化したい場合は、tiiny.host が簡単です。
-
-tiiny.host にアクセスします。
-
-「Upload your file」エリアに index.html をドラッグ＆ドロップします。
-
-Link name に任意の英数字（例: rowing-watch-01）を入力します。
-
-「Publish」 ボタンを押すと、数秒で共有用URLが作成されます。
-
-LINEで共有する際のポイント
-
-発行されたURLの末尾に ?openExternalBrowser=1#部屋コード を付けて送信すると、LINE内ブラウザではなく標準ブラウザ（Safari/Chrome）で開き、Excel出力もスムーズに行えます。
-
-送信URL例: [https://rowing-watch-01.tiiny.site/?openExternalBrowser=1#rowing123](https://rowing-watch-01.tiiny.site/?openExternalBrowser=1#rowing123)
-
-無料ではなかったので、違う方法を教えてほしい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-クレジットカード登録や有料化の心配が一切ない、完全永久無料でWeb公開できる2つの方法（CodePen / GitHub Pages）をご案内します。
-
-ご提示いただいたすべての条件（mm:ss.00表示、LAP/SPLIT一覧、START/STOP/LAP操作、複数人P2Pリアルタイム同期、最大100艇の増減、ファイル名指定・横持ちExcel出力）を網羅した最新コードと併せてご利用ください。
-
-おすすめの完全無料公開方法
-
-方法1：CodePenを使う（最も手軽・1分で完了）
-
-CodePen にアクセスし、無料アカウントを作成します（メールアドレスまたはGoogleアカウントのみ）。
-
-左上の「Create」→「Pen」をクリックします。
-
-HTMLエリアに下のコードをそのまま貼り付けます（CSSやJSのエリアは空欄のままでOK）。
-
-右上の「Save」を押します。
-
-保存後、ブラウザのアドレスバーにあるURLの /pen/ の部分を /full/ に変更してコピーします。
-
-例：[https://codepen.io/your-name/full/xxxxxx](https://codepen.io/your-name/full/xxxxxx)
-
-方法2：GitHub Pagesを使う（Webサイトとして永久保存）
-
-GitHub で無料アカウントを作成します。
-
-「New repository」から適当な名前（例: rowing-stopwatch）でリポジトリを作成します。
-
-「uploading an existing file」を選択し、作成した index.html をアップロードして「Commit changes」を押します。
-
-設定（Settings）→「Pages」に進み、Branchを「main」に変更して「Save」を押すと、数分で無料のWebサイトURLが発行されます。
-
-LINEで共有する際のコツ
-発行されたURLの末尾に ?openExternalBrowser=1#部屋コード を追加して送信してください。LINE内ブラウザではなく標準ブラウザ（Safari / Chrome）で自動起動し、Excel書き出しやリアルタイム同期が確実に行えます。
-
-送信例：[https://codepen.io/your-name/full/xxxxxx?openExternalBrowser=1#rowing2026](https://codepen.io/your-name/full/xxxxxx?openExternalBrowser=1#rowing2026)
-
-動作確認済み 完全版コード (index.html)
-
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURLを開いた端末同士でリアルタイム自動同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード制御
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v8-${roomCode}`;
-
-    // --- P2P リアルタイム同期設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- 操作伝播・状態更新 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => { delete state.stopwatches[swId]; });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- UI操作関数 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- mm:ss.00 フォーマット ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- Excel出力（名前指定 ＆ 1艇につき2行の横持ち形式） ---
-    window.exportExcel = () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const defaultFileName = `Rowing_Result_${today}`;
-      
-      const userInput = prompt("保存するファイル名を入力してください（.xlsx は自動付与）:", defaultFileName);
-      if (userInput === null) return;
-      
-      const fileName = userInput.trim() || defaultFileName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      const aoa = [];
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      const header = ['艇名', '項目'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
-      }
-      aoa.push(header);
-
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        const lapRow = [sw.name, 'LAP'];
-        const splitRow = [sw.name, 'SPLIT'];
-
-        if (laps.length === 0) {
-          lapRow.push('-');
-          splitRow.push(formatTime(getElapsedTime(sw)));
-        } else {
-          laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
-          });
-        }
-
-        aoa.push(lapRow);
-        aoa.push(splitRow);
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, finalFileName);
-    };
-
-    // --- UI描画 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) el.innerText = formatTime(getElapsedTime(sw));
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-保存後、ブラウザのアドレスバーにあるURLの /pen/ の部分を /full/ に変更してコピーします。
-
-うまくいかない
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-CodePenでURLを手動変更（/full/）すると、ログイン状態やセキュリティ制限により表示エラーが発生することがあります。
-
-手動でURLを書き換えず画面上のボタンを使う方法か、登録不要で一発でWebページ化できるサービス（htmlsave.com）をご利用ください。
-
-方法1：CodePenの画面操作でURLを取得する
-CodePenの編集画面右上にある 「Change View」 をクリックします。
-
-メニューから 「Full Page View」（または 「Debug mode」）を選択します。
-
-切り替わった画面のアドレスバーのURLをそのままコピーします。
-
-方法2：登録不要で1分でURL化する（htmlsave.com）
-登録やログインなしで、コードを貼るだけで即座にWeb公開できる無料サービスです。
-
-htmlsave.com にアクセスします。
-
-大きな入力エリアに、作成した index.html の全コードを貼り付けます。
-
-下部の 「Submit」 ボタンを押します。
-
-発行されたURL（例: [https://xxxx.htmlsave.net](https://xxxx.htmlsave.net)）をコピーします。
-
-LINEで送信する際のアドバイス
-取得したURLの末尾に ?openExternalBrowser=1#部屋コード を付け足してLINEで送信してください。
-
-送信例：[https://xxxx.htmlsave.net/?openExternalBrowser=1#rowing123](https://xxxx.htmlsave.net/?openExternalBrowser=1#rowing123)
-
-LINEでタップした際、標準ブラウザ（SafariやChrome）で自動的に開くため、複数人でのリアルタイム同期やExcel出力の不具合を完全に防ぐことができます。
-
-保存時にPROにアップグレードしないといけませんでした
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-無料をうたいつつ途中でPROプラン（有料）への誘導が出るサイトが多く、ご不便をおかけしてしまいすみません。
-
-クレジットカード登録や有料化が一切存在しない、100%完全無料・制限なしで共有できる2つの方法（Glitch または GitHub Pages）をご案内します。
-
-要件（mm:ss.00表記、LAP/SPLIT同時表示、START/STOP/LAP、PeerJSによる複数人P2Pリアルタイム共有、最大100艇の増減、ファイル名指定Excel出力）をすべて網羅したコードとあわせてご利用ください。
-
-方法1：Glitchを使う（推奨・1分で完了）
-
-会員登録のみ（Googleアカウントでログイン可）で、クレジットカードの入力画面すら存在しない完全無料のWEB開発プラットフォームです。
-
-Glitch にアクセスし、右上「Log in」からGoogle等でログインします。
-
-右上の 「New Project」 ＞ 「glitch-hello-website」 を選択します。
-
-左側のファイル一覧から index.html を選び、中身を全選択して消去し、下のコードをそのまま貼り付けます。
-
-下部の 「Share」 ＞ 「Live site」 のリンク（または画面上の「Preview」＞「Open preview in new window」）のURLをコピーします。
-
-方法2：GitHub Pagesを使う（永久無料・標準的サービス）
-
-GitHub で無料アカウントを作成します。
-
-「New repository」をクリックし、リポジトリ名（例: rowing-stopwatch）を入力して「Create repository」を押します。
-
-「uploading an existing file」を押して index.html をアップロードします。
-
-設定（Settings）＞「Pages」に進み、Branchを「main」にして「Save」を押すと無料のURLが発行されます。
-
-LINE送信時の注意点
-発行されたURLの末尾に ?openExternalBrowser=1#部屋コード を付与してLINE送信すると、標準ブラウザ（Safari/Chrome）で起動し、リアルタイム共有とExcel保存がスムーズに行えます。
-
-例：[https://xxxxx.glitch.me/?openExternalBrowser=1#rowing123](https://xxxxx.glitch.me/?openExternalBrowser=1#rowing123)
-
-全機能実装コード (index.html)
-HTML
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rowing マルチストップウォッチ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
-        </div>
-        <div class="text-xs text-gray-400">
-          ※同じURL（部屋コード付き）を開いた端末同士でリアルタイム自動同期
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
-          </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
-          </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
-          </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
-          </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
-          </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
-          </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            Excel出力
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-
-  </div>
-
-  <script>
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード生成
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v9-${roomCode}`;
-
-    // --- P2P リアルタイム通信設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
-        });
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
-        });
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-            });
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
-      }
-    }
-
-    // --- 状態管理・操作の伝播 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => { delete state.stopwatches[swId]; });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- UI操作関数 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- mm:ss.00 フォーマット ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // --- Excel出力（ファイル名入力 ＆ 1艇につき2行の横持ち形式） ---
-    window.exportExcel = () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const defaultFileName = `Rowing_Result_${today}`;
-      
-      const userInput = prompt("保存するファイル名を入力してください（.xlsx は自動付与）:", defaultFileName);
-      if (userInput === null) return;
-      
-      const fileName = userInput.trim() || defaultFileName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      const aoa = [];
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      const header = ['艇名', '項目'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
-      }
-      aoa.push(header);
-
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        const lapRow = [sw.name, 'LAP'];
-        const splitRow = [sw.name, 'SPLIT'];
-
-        if (laps.length === 0) {
-          lapRow.push('-');
-          splitRow.push(formatTime(getElapsedTime(sw)));
-        } else {
-          laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
-          });
-        }
-
-        aoa.push(lapRow);
-        aoa.push(splitRow);
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, finalFileName);
-    };
-
-    // --- UI描画 ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
-            </div>
-
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
-
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
-                LAP
-              </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
-                RESET
-              </button>
-            </div>
-
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
-              </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) el.innerText = formatTime(getElapsedTime(sw));
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-設定（Settings）＞「Pages」に進み、Branchを「main」にして「Save」を押すと無料のURLが発行されます。
-
-URLが発行されません
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-GitHub PagesでURLがすぐに表示されない場合、いくつかの代表的な原因が考えられます。以下の3つのポイントをご確認ください。
-
-1. ビルド処理の待ち時間（1〜3分程度）
-「Save」を押した後、GitHub内部でWebサイトに変換する処理が始まります。
-
-1〜3分ほど待ち、ブラウザの更新ボタン（リフレッシュ）を押してください。
-
-画面上部に緑色の帯で Your site is live at https://... とURLが表示されます。
-
-上部メニューの 「Actions」 タブを開くと、進行状況（黄色＝処理中 / 緑＝完了）を確認できます。
-
-2. リポジトリが「Private（非公開）」になっている
-無料アカウントの場合、リポジトリを「Private」で作成するとGitHub PagesのURLが発行されません。
-
-上部メニューの 「Settings」 を開きます。
-
-一番下までスクロールし 「Danger Zone」 にある 「Change visibility」 をクリックします。
-
-「Change to public」 を選択して公開設定に変更してください。
-
-3. 保存時のフォルダ設定
-
-Settings ＞ Pages を開きます。
-
-Branch で main を選択した際、その右隣の選択肢が / (root) になっているか確認し、再度 「Save」 を押してください。
-
-発行されるURLの形式
-処理が完了すると、次の形式のURLが発行されます。
-
-https://<あなたのGitHubユーザー名>.github.io/<リポジトリ名>/
-
-LINEで共有する際は、末尾に ?openExternalBrowser=1#部屋コード を追加して送信してください。（例：[https://username.github.io/rowing-app/?openExternalBrowser=1#rowing123](https://username.github.io/rowing-app/?openExternalBrowser=1#rowing123)）
-
-コードの修正をしてほしい
-
-スマホでも使用するので、ボタンサイズや配置をスマホに対応させてほしい
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-ご要望いただいた以下の全機能およびスマートフォンでの使いやすさ（ボタンサイズ・配置・誤操作防止）を反映した最新コードを作成しました。
-
-ご生成した index.html ファイルをそのままダウンロードしてご利用いただけます。
-
-HTML のアイコン
-index
- HTML 
-開く
-🔥 今回修正・強化したポイント
-📱 スマートフォン（スマホ）操作への徹底最適化
-
-タッチしやすい大きなボタン: ボタンの最小高さを 48px 以上確保し、押し間違いを防止。
-
-タップ時のフィードバック: ボタンを押した瞬間にキューッと沈み込むアニメーション（active:scale-95）を追加。
-
-視認性の高いタイマー表示: 暗所・屋外の太陽光下でも見やすいダークLED風（mm:ss.00 形式、特大フォント）に改良。
-
-固定コントロールバー（Sticky Header）: 100艇分スクロールしても、画面上部に「一斉スタート」「艇追加」「Excel出力」などの操作バーが常に固定表示されます。
-
-ダブルタップズームの防止: スマホでボタンを連打した際に画面が勝手に拡大されないCSSを設定。
-
-⏱ タイム表示（mm:ss.00）＆ LAP / SPLIT 並列表示
-
-タイマー表示は 00:00.00（分:秒.100分の1秒）で統一。
-
-ラップボタンを押すたびに、最新の 「LAPタイム（その区間のタイム）」 と 「SPLITタイム（スタートからの累計タイム）」 を分かりやすく2列でカード内に一覧表示します。
-
-👥 リアルタイム複数人共有（P2P同期）
-
-同じURL（部屋コード付き）を開いている全員の画面が瞬時に同期されます。
-
-「Aさんがスタートを押す」「Bさんがラップを押す」「Cさんが艇を追加する」などの操作が、全員のスマホ・PCへ即座に反映されます。
-
-LINE共有用URLコピー機能: LINEのアプリ内ブラウザ問題を防ぐ ?openExternalBrowser=1 付きのリンクを1タップでコピーできます。
-
-🚣‍♂️ 最大100艇までの増減＆一括操作
-
-「艇を追加」「艇削除」ボタンで自在に増減（最大100艇まで可能）。
-
-チェックボックスで複数艇を選択し、「選択艇 一斉スタート」 も可能です。
-
-📊 Excelファイル（.xlsx）出力機能
-
-「Excel出力」ボタンを押すと、保存するファイル名を入力するダイアログが表示されます。
-
-艇ごとに 「LAP行」 と 「SPLIT行」 が横にキレイに並んだ実用的なフォーマットで出力されます。
-
-📄 全コード (index.html)
-GitHub Pagesにアップロードする、あるいはブラウザで直接開くファイルの内容です。
-
-HTML
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -2975,633 +11,10 @@ HTML
   <!-- SheetJS for Excel Export -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <style>
-    /* スマホの誤操作・ダブルタップズーム防止およびタッチレスポンス向上 */
     button, input, label, select {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    /* カスタムスクロールバー */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #f1f5f9;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
-    }
-  </style>
-</head>
-<body class="bg-slate-100 min-h-screen pb-12 text-slate-800 antialiased selection:bg-blue-200">
-
-  <!-- メインコンテナ -->
-  <div class="max-w-6xl mx-auto px-2 sm:px-4 pt-3">
-
-    <!-- Sticky 操作コントロールバー -->
-    <header class="bg-white/95 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg border border-slate-200/80 mb-4 sticky top-2 z-30 transition-all">
-      
-      <!-- ステータス ＆ 部屋コード ＆ LINE共有リンク -->
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5 mb-3 text-xs sm:text-sm">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span id="statusBadge" class="px-2.5 py-1 font-bold rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1.5 shadow-sm">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span id="statusText">接続準備中...</span>
-          </span>
-          <div class="flex items-center gap-1 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
-            <span class="text-slate-500 font-medium">部屋:</span>
-            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600 text-sm"></span>
-          </div>
-        </div>
-
-        <!-- 共有用URLコピーボタン -->
-        <button onclick="copyShareUrl()" class="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold px-3 py-1.5 rounded-lg text-xs transition active:scale-95 shadow-sm">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
-          LINE共有URLをコピー
-        </button>
-      </div>
-
-      <!-- 操作ボタン群（スマホ対応グリッドレイアウト） -->
-      <div class="space-y-2.5">
-        
-        <!-- 一括選択 & カウント表示 -->
-        <div class="flex items-center justify-between">
-          <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-700 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 transition">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
-            <span class="text-xs sm:text-sm">全選択</span>
-          </label>
-          <div class="text-xs sm:text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200">
-            登録艇数: <span id="count" class="text-base text-blue-800 font-black">0</span> / 100
-          </div>
-        </div>
-
-        <!-- 一括アクションボタン群 -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap items-center gap-1.5 sm:gap-2">
-          
-          <button onclick="batchStart()" class="col-span-2 sm:col-span-1 min-h-[44px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
-            選択艇 一斉スタート
-          </button>
-
-          <button onclick="addTimer()" class="min-h-[44px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-            艇を追加
-          </button>
-
-          <button onclick="removeTimer()" class="min-h-[44px] bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
-            艇削除
-          </button>
-
-          <button onclick="stopAllTimers()" class="min-h-[44px] bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
-            全体STOP
-          </button>
-
-          <button onclick="resetAllTimers()" class="min-h-[44px] bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-            全体リセット
-          </button>
-
-          <button onclick="exportExcel()" class="col-span-2 sm:col-span-1 min-h-[44px] bg-slate-800 hover:bg-slate-900 active:bg-black text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 md:ml-auto">
-            <svg class="w-4 h-4 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
-            Excel出力
-          </button>
-
-        </div>
-      </div>
-    </header>
-
-    <!-- コピー完了通知トースト -->
-    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs sm:text-sm font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-2 border border-slate-700">
-      <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-      <span id="toastMsg">URLをコピーしました！</span>
-    </div>
-
-    <!-- ストップウォッチカード グリッド（スマホ: 1列, タブレット: 2列, PC: 3列） -->
-    <main id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"></main>
-
-  </div>
-
-  <!-- JavaScript アプリケーションロジック -->
-  <script>
-    // --- アプリケーション状態 ---
-    let state = { stopwatches: {} };
-    let selectedIds = new Set();
-    let isHost = true;
-    let peer = null;
-    let hostConn = null;
-    let clientConns = [];
-
-    // 部屋コード制御 (URL Hashから取得、なければ自動作成)
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
-    }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v10-${roomCode}`;
-
-    // --- P2P リアルタイム同期設定 ---
-    function initP2P() {
-      try {
-        peer = new Peer(hostPeerId);
-        
-        peer.on('open', () => {
-          isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
-        });
-
-        peer.on('connection', (conn) => {
-          clientConns.push(conn);
-          conn.on('open', () => {
-            conn.send({ type: 'SYNC_STATE', state });
-          });
-          conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => {
-            clientConns = clientConns.filter(c => c !== conn);
-          });
-        });
-
-        peer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            // ホストが既に存在する場合はゲスト（参加者）として接続
-            isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800 border-blue-300');
-              
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-              
-              hostConn.on('close', () => {
-                updateStatus('切断されました', 'bg-rose-100 text-rose-800 border-rose-300');
-              });
-            });
-          } else {
-            console.warn("PeerJS error:", err);
-            updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
-          }
-        });
-      } catch (e) {
-        console.warn("P2P Init Error:", e);
-        updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
-      }
-    }
-
-    function updateStatus(text, colorClass) {
-      const badge = document.getElementById('statusBadge');
-      const statusText = document.getElementById('statusText');
-      if (badge && statusText) {
-        statusText.innerText = text;
-        badge.className = `px-2.5 py-1 font-bold rounded-full flex items-center gap-1.5 shadow-sm border ${colorClass}`;
-      }
-    }
-
-    // --- アクションの伝播と実行 ---
-    function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
-    }
-
-    function handleAction(action) {
-      const now = Date.now();
-      const keys = Object.keys(state.stopwatches);
-
-      switch (action.type) {
-        case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
-          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id,
-            name: `艇 ${keys.length + 1}`,
-            isRunning: false,
-            startTime: 0,
-            accumulatedTime: 0,
-            laps: []
-          };
-          break;
-
-        case 'DELETE':
-          delete state.stopwatches[action.id];
-          selectedIds.delete(action.id);
-          break;
-
-        case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => {
-            delete state.stopwatches[swId];
-          });
-          selectedIds.clear();
-          break;
-
-        case 'REMOVE_LAST':
-          if (keys.length > 0) {
-            const lastId = keys[keys.length - 1];
-            delete state.stopwatches[lastId];
-            selectedIds.delete(lastId);
-          }
-          break;
-
-        case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
-          }
-          break;
-
-        case 'RESET_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            sw.isRunning = false;
-            sw.startTime = 0;
-            sw.accumulatedTime = 0;
-            sw.laps = [];
-          });
-          break;
-
-        case 'STOP_ALL':
-          Object.keys(state.stopwatches).forEach(swId => {
-            const sw = state.stopwatches[swId];
-            if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            }
-          });
-          break;
-
-        case 'TOGGLE_START':
-          const sw = state.stopwatches[action.id];
-          if (sw) {
-            if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
-              sw.isRunning = false;
-              sw.startTime = 0;
-            } else {
-              sw.isRunning = true;
-              sw.startTime = now;
-            }
-          }
-          break;
-
-        case 'ADD_LAP':
-          const swLap = state.stopwatches[action.id];
-          if (swLap && swLap.isRunning) {
-            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
-            const laps = swLap.laps || [];
-            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
-            const lapDuration = currentSplit - lastSplit;
-
-            laps.push({
-              lapTime: formatTime(lapDuration),
-              splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now
-            });
-            swLap.laps = laps;
-          }
-          break;
-
-        case 'UPDATE_NAME':
-          if (state.stopwatches[action.id]) {
-            state.stopwatches[action.id].name = action.name;
-          }
-          break;
-
-        case 'BATCH_START':
-          (action.ids || []).forEach(swId => {
-            const target = state.stopwatches[swId];
-            if (target && !target.isRunning) {
-              target.isRunning = true;
-              target.startTime = now;
-            }
-          });
-          break;
-      }
-
-      if (isHost) broadcastState();
-      renderStructure();
-    }
-
-    function broadcastState() {
-      clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
-      });
-    }
-
-    // --- UI操作関数 ---
-    window.addTimer = () => dispatchAction({ type: 'ADD' });
-    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
-    window.removeTimer = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
-
-      if (selectedIds.size > 0) {
-        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
-          dispatchAction({ type: 'DELETE_SELECTED' });
-        }
-      } else {
-        dispatchAction({ type: 'REMOVE_LAST' });
-      }
-    };
-    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
-    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
-    window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（計測記録がすべて削除されます）")) {
-        dispatchAction({ type: 'RESET_ALL' });
-      }
-    };
-    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
-    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
-    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
-    window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇にチェックを入れて選択してください");
-      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
-    };
-
-    // --- mm:ss.00 フォーマット表示 ---
-    function formatTime(ms) {
-      if (!ms || ms < 0) ms = 0;
-      const m = Math.floor(ms / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const h = Math.floor((ms % 1000) / 10);
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
-    }
-
-    function getElapsedTime(sw) {
-      if (!sw) return 0;
-      let elapsed = sw.accumulatedTime || 0;
-      if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
-      }
-      return elapsed;
-    }
-
-    window.toggleSelect = (id) => {
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      renderStructure();
-    };
-
-    window.toggleSelectAll = (e) => {
-      const keys = Object.keys(state.stopwatches);
-      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
-      else selectedIds.clear();
-      renderStructure();
-    };
-
-    // LINE共有用URLコピー機能
-    window.copyShareUrl = () => {
-      const baseUrl = location.origin + location.pathname;
-      const shareUrl = `${baseUrl}?openExternalBrowser=1#${roomCode}`;
-      
-      navigator.clipboard.writeText(shareUrl).then(() => {
-        showToast("LINE共有URLをコピーしました！");
-      }).catch(() => {
-        prompt("以下のURLをコピーしてLINEに送信してください:", shareUrl);
-      });
-    };
-
-    function showToast(msg) {
-      const toast = document.getElementById('toast');
-      const toastMsg = document.getElementById('toastMsg');
-      if (toast && toastMsg) {
-        toastMsg.innerText = msg;
-        toast.classList.remove('translate-y-20', 'opacity-0');
-        setTimeout(() => {
-          toast.classList.add('translate-y-20', 'opacity-0');
-        }, 2500);
-      }
-    }
-
-    // --- Excel出力（ファイル名指定 Prompt ＆ 横持ちフォーマット） ---
-    window.exportExcel = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
-
-      const today = new Date().toISOString().slice(0, 10);
-      const defaultFileName = `Rowing_Result_${today}`;
-      
-      const userInput = prompt("保存するExcelファイル名を入力してください（.xlsx は自動付与）:", defaultFileName);
-      if (userInput === null) return;
-      
-      const fileName = userInput.trim() || defaultFileName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      const aoa = [];
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      const header = ['艇名', '項目'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
-      }
-      aoa.push(header);
-
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        const lapRow = [sw.name, 'LAP'];
-        const splitRow = [sw.name, 'SPLIT'];
-
-        if (laps.length === 0) {
-          lapRow.push('-');
-          splitRow.push(formatTime(getElapsedTime(sw)));
-        } else {
-          laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
-          });
-        }
-
-        aoa.push(lapRow);
-        aoa.push(splitRow);
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-      XLSX.writeFile(wb, finalFileName);
-    };
-
-    // --- UI構造描画 (スマホ最適化カードレイアウト) ---
-    function renderStructure() {
-      const container = document.getElementById("app");
-      const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
-
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      if (keys.length === 0) {
-        container.innerHTML = `
-          <div class="col-span-full bg-white p-8 rounded-2xl shadow-sm text-center border border-slate-200 py-12">
-            <div class="w-16 h-16 mx-auto bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-3">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            </div>
-            <p class="text-slate-600 font-bold mb-1">ストップウォッチがありません</p>
-            <p class="text-xs text-slate-400 mb-4">「+ 艇を追加」ボタンを押して計測を開始してください</p>
-            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl shadow text-sm inline-flex items-center gap-1.5 transition">
-              + 最初の艇を追加
-            </button>
-          </div>
-        `;
-        return;
-      }
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-3.5 sm:p-4 rounded-2xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200/80 bg-blue-50/20' : 'border-slate-200/90'} transition-all">
-            
-            <!-- ヘッダー: 選択チェックボックス + 艇名入力 + 個別削除 -->
-            <div class="flex items-center justify-between gap-2 mb-2.5">
-              <div class="flex items-center gap-2 flex-1 min-w-0">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名を入力" class="font-bold text-slate-800 text-base sm:text-lg border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-1 py-0.5 rounded transition">
-              </div>
-              <button onclick="deleteTimer('${id}')" title="この艇を削除" class="text-slate-300 hover:text-red-500 active:text-red-600 p-1 rounded-lg transition flex-shrink-0">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-              </button>
-            </div>
-
-            <!-- mm:ss.00 メインタイマー表示 (スマホでも圧倒的視認性) -->
-            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-3xl sm:text-4xl text-center py-3 px-2 rounded-xl my-2.5 shadow-inner tracking-wider border border-slate-800">
-              <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
-            </div>
-
-            <!-- 操作ボタン（START/STOP, LAP, RESET — スマホ親指で押しやすい高機能サイズ） -->
-            <div class="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">
-              <button onclick="toggleStart('${id}')" class="min-h-[48px] rounded-xl font-bold text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center ${sw.isRunning ? 'bg-red-500 hover:bg-red-600 active:bg-red-700' : 'bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[48px] rounded-xl font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center disabled:opacity-35 disabled:cursor-not-allowed">
-                LAP
-              </button>
-
-              <button onclick="resetTimer('${id}')" class="min-h-[48px] rounded-xl font-bold bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center">
-                RESET
-              </button>
-            </div>
-
-            <!-- LAP / SPLIT 履歴リスト -->
-            <div class="border-t border-slate-100 pt-2 text-xs font-mono">
-              <div class="flex justify-between text-slate-400 mb-1 px-1 font-sans text-[11px] font-bold">
-                <span class="w-10">LAP</span>
-                <span class="w-1/2 text-right">LAPタイム</span>
-                <span class="w-1/2 text-right">SPLITタイム</span>
-              </div>
-              
-              <div class="max-h-32 overflow-y-auto space-y-1 pr-0.5">
-                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-3 font-sans text-xs">ラップ記録なし</div>' : 
-                  laps.slice().reverse().map((lap, i) => `
-                    <div class="flex justify-between items-center py-1 px-1.5 rounded bg-slate-50 border border-slate-100">
-                      <span class="font-bold text-slate-400 w-10 text-[11px]">#${laps.length - i}</span>
-                      <span class="text-amber-600 font-bold w-1/2 text-right">${lap.lapTime}</span>
-                      <span class="text-blue-600 font-bold w-1/2 text-right">${lap.splitTime}</span>
-                    </div>
-                  `).join('')
-                }
-              </div>
-            </div>
-
-          </div>
-        `;
-      }).join('');
-    }
-
-    // 画面再描画を行わずに数字のみを毎フレーム(60fps)更新
-    function updateTimerNumbers() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const el = document.getElementById(`display-${id}`);
-          if (el) {
-            el.innerText = formatTime(getElapsedTime(sw));
-          }
-        }
-      });
-      requestAnimationFrame(updateTimerNumbers);
-    }
-
-    // 初期化実行
-    initP2P();
-    renderStructure();
-    requestAnimationFrame(updateTimerNumbers);
-  </script>
-</body>
-</html>
-スマホの画面に６個のタイマーを配置したい
-
-横に２つ縦に３つ
-
-Rowing計測用ストップウオッチ
-カスタム Gem
-スマホ画面で横2列×縦3列（6個表示）にぴったり収まるよう、レスポンシブグリッドおよびボタン・文字サイズを最適化しました。
-
-HTML のアイコン
-index
- HTML 
-開く
-主な変更・対応点
-
-スマホ画面で横2列配置: スマホ幅で grid-cols-2 に設定し、6個のタイマーが「横2つ × 縦3つ」で画面に収まります。
-
-UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボタン（START / LAP / RESET）がはみ出さないよう、文字盤とボタンの大きさを自動調整しました。
-
-初期6艇表示: アプリ起動時にあらかじめ6艇のタイマーが配置されるよう設定しました（最大100艇まで増減可能）。
-
-全機能の引き継ぎ: P2Pでの複数人リアルタイム共有・操作同期、LAP/SPLIT同時表示、Excel出力機能もすべて組み込み済みです。
-
-
-
-
-福井県教育委員会 のチャットはモデルのトレーニングには使用されません。Gemini は AI であり、間違えることがあります。プライバシーと Gemini新しいウィンドウで開く
-
-
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- PeerJS for P2P Realtime Sync -->
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <!-- SheetJS for Excel Export -->
-  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-  <style>
-    /* スマホの誤操作・ダブルタップズーム防止およびタッチレスポンス向上 */
-    button, input, label, select {
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-    }
-    /* カスタムスクロールバー */
     ::-webkit-scrollbar {
       width: 4px;
       height: 4px;
@@ -3616,99 +29,100 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
     }
   </style>
 </head>
-<body class="bg-slate-100 min-h-screen pb-12 text-slate-800 antialiased selection:bg-blue-200">
+<body class="bg-slate-100 min-h-screen pb-10 text-slate-800 antialiased selection:bg-blue-200">
 
-  <!-- メインコンテナ -->
-  <div class="max-w-6xl mx-auto px-1.5 sm:px-4 pt-2 sm:pt-3">
+  <div class="max-w-[1600px] mx-auto px-2 pt-2">
 
-    <!-- Sticky 操作コントロールバー -->
-    <header class="bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-xl sm:rounded-2xl shadow-lg border border-slate-200/80 mb-3 sticky top-1 z-30 transition-all">
+    <!-- ヘッダー・操作コントロールバー -->
+    <header class="bg-white/95 backdrop-blur-md p-2 sm:p-3 rounded-xl shadow-md border border-slate-200/80 mb-3 sticky top-1 z-30">
       
-      <!-- ステータス ＆ 部屋コード ＆ LINE共有リンク -->
-      <div class="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-2 mb-2.5 text-xs sm:text-sm">
+      <!-- ステータス ＆ 部屋コード ＆ URL共有 -->
+      <div class="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-2 mb-2 text-xs">
         <div class="flex items-center gap-1.5 flex-wrap">
-          <span id="statusBadge" class="px-2 py-0.5 sm:px-2.5 sm:py-1 font-bold rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1 shadow-sm text-[11px] sm:text-xs">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1 text-[11px]">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             <span id="statusText">接続準備中...</span>
           </span>
-          <div class="flex items-center gap-1 bg-slate-100 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-slate-200 text-[11px] sm:text-xs">
-            <span class="text-slate-500 font-medium">部屋:</span>
+          <div class="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+            <span class="text-slate-500 font-medium">共有ID:</span>
             <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600"></span>
           </div>
         </div>
 
-        <!-- 共有用URLコピーボタン -->
-        <button onclick="copyShareUrl()" class="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold px-2.5 py-1 rounded-lg text-[11px] sm:text-xs transition active:scale-95 shadow-sm">
+        <button onclick="copyShareUrl()" class="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2.5 py-1 rounded text-[11px] shadow-sm transition active:scale-95">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
-          LINE共有URLをコピー
+          共有URLコピー
         </button>
       </div>
 
-      <!-- 操作ボタン群 -->
-      <div class="space-y-2">
-        
-        <!-- 一括選択 & カウント表示 -->
-        <div class="flex items-center justify-between">
-          <label class="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 transition text-xs">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+      <!-- コントロールボタン群 -->
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-xs">
+          <label class="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-100 transition">
+            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
             <span>全選択</span>
           </label>
-          <div class="text-xs font-bold bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200">
+          <div class="font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 text-xs">
             登録艇数: <span id="count" class="text-sm text-blue-800 font-black">0</span> / 100
           </div>
         </div>
 
-        <!-- 一括アクションボタン群（スマホ対応グリッドレイアウト） -->
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap items-center gap-1.5">
-          
-          <button onclick="batchStart()" class="col-span-2 sm:col-span-1 min-h-[40px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95">
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap items-center gap-1.5 text-xs">
+          <button onclick="batchStart()" class="col-span-2 sm:col-span-1 min-h-[34px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
-            選択艇 一斉スタート
+            選択一斉START
           </button>
 
-          <button onclick="addTimer()" class="min-h-[40px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95">
+          <button onclick="addTimer()" class="min-h-[34px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-            艇を追加
+            追加
           </button>
 
-          <button onclick="removeTimer()" class="min-h-[40px] bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95">
+          <button onclick="removeTimer()" class="min-h-[34px] bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
-            艇削除
+            削除
           </button>
 
-          <button onclick="stopAllTimers()" class="min-h-[40px] bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95">
+          <button onclick="stopAllTimers()" class="min-h-[34px] bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
             全体STOP
           </button>
 
-          <button onclick="resetAllTimers()" class="min-h-[40px] bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95">
+          <button onclick="resetAllTimers()" class="min-h-[34px] bg-slate-600 hover:bg-slate-700 active:bg-slate-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             全体リセット
           </button>
 
-          <button onclick="exportExcel()" class="col-span-2 sm:col-span-1 min-h-[40px] bg-slate-800 hover:bg-slate-900 active:bg-black text-white font-bold px-2.5 py-1.5 rounded-xl shadow-sm text-xs flex items-center justify-center gap-1 transition active:scale-95 md:ml-auto">
+          <button onclick="shareLineCSV()" class="min-h-[34px] bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049a41] text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95 md:ml-auto">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M24 10.304c0-5.231-5.383-9.471-12-9.471s-12 4.24-12 9.471c0 4.69 4.269 8.601 10.026 9.324.39.085.922.258 1.057.591.121.301.079.766.038 1.08-.085.643-.389 2.493-.423 2.882-.057.659.308.647.647.433.339-.214 5.39-3.178 7.362-5.441 3.252-1.986 5.302-5.021 5.302-8.869z"/></svg>
+            LINE送信
+          </button>
+
+          <button onclick="shareGmailCSV()" class="min-h-[34px] bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L12 9.545l8.073-6.052c1.618-1.214 3.927-.059 3.927 1.964z"/></svg>
+            Gmail送信
+          </button>
+
+          <button onclick="exportExcel()" class="min-h-[34px] bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
             Excel出力
           </button>
-
         </div>
       </div>
     </header>
 
-    <!-- コピー完了通知トースト -->
-    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-2xl text-xs font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-1.5 border border-slate-700">
+    <!-- 通知トースト -->
+    <div id="toast" class="fixed bottom-4 right-4 bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-2xl text-xs font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-2 border border-slate-700">
       <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
       <span id="toastMsg">URLをコピーしました！</span>
     </div>
 
-    <!-- ストップウォッチカード グリッド（スマホ: 横2列×縦3列[6個表示], タブレット/PC: 3列） -->
-    <main id="app" class="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3.5"></main>
+    <!-- ストップウォッチカード一覧 -->
+    <main id="app" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2"></main>
 
   </div>
 
-  <!-- JavaScript アプリケーションロジック -->
   <script>
-    // --- アプリケーション状態 ---
     let state = { stopwatches: {} };
     let selectedIds = new Set();
     let isHost = true;
@@ -3716,50 +130,26 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
     let hostConn = null;
     let clientConns = [];
 
-    // 部屋コード制御 (URL Hashから取得、なければ自動作成)
     let roomCode = location.hash.replace('#', '');
     if (!roomCode) {
       roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
       location.hash = roomCode;
     }
     document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v10-${roomCode}`;
+    const hostPeerId = `rowing-app-room-v12-${roomCode}`;
 
-    // 初期タイマー6個を自動生成（初回起動時）
-    function initDefaultTimers() {
-      if (Object.keys(state.stopwatches).length === 0) {
-        const now = Date.now();
-        for (let i = 1; i <= 6; i++) {
-          const id = 'sw_' + (now + i) + '_' + Math.floor(Math.random() * 1000);
-          state.stopwatches[id] = {
-            id,
-            name: `艇 ${i}`,
-            isRunning: false,
-            startTime: 0,
-            accumulatedTime: 0,
-            laps: []
-          };
-        }
-      }
-    }
-
-    // --- P2P リアルタイム同期設定 ---
     function initP2P() {
       try {
         peer = new Peer(hostPeerId);
         
         peer.on('open', () => {
           isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
-          initDefaultTimers();
-          renderStructure();
+          updateStatus('ホスト', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
 
         peer.on('connection', (conn) => {
           clientConns.push(conn);
-          conn.on('open', () => {
-            conn.send({ type: 'SYNC_STATE', state });
-          });
+          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
           conn.on('data', (data) => handleAction(data));
           conn.on('close', () => {
             clientConns = clientConns.filter(c => c !== conn);
@@ -3768,12 +158,11 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
 
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
-            // ホストが既に存在する場合はゲスト（参加者）として接続
             isHost = false;
             peer = new Peer();
             peer.on('open', () => {
               hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800 border-blue-300');
+              updateStatus('参加中', 'bg-blue-100 text-blue-800 border-blue-300');
               
               hostConn.on('data', (data) => {
                 if (data.type === 'SYNC_STATE') {
@@ -3783,21 +172,15 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
               });
               
               hostConn.on('close', () => {
-                updateStatus('切断されました', 'bg-rose-100 text-rose-800 border-rose-300');
+                updateStatus('切断', 'bg-rose-100 text-rose-800 border-rose-300');
               });
             });
           } else {
-            console.warn("PeerJS error:", err);
             updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
-            initDefaultTimers();
-            renderStructure();
           }
         });
       } catch (e) {
-        console.warn("P2P Init Error:", e);
         updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
-        initDefaultTimers();
-        renderStructure();
       }
     }
 
@@ -3806,18 +189,14 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       const statusText = document.getElementById('statusText');
       if (badge && statusText) {
         statusText.innerText = text;
-        badge.className = `px-2 py-0.5 sm:px-2.5 sm:py-1 font-bold rounded-full flex items-center gap-1 shadow-sm border ${colorClass}`;
+        badge.className = `px-2 py-0.5 font-bold rounded-full flex items-center gap-1 border text-[10px] ${colorClass}`;
       }
     }
 
-    // --- アクションの伝播と実行 ---
     function dispatchAction(action) {
       handleAction(action);
-      if (isHost) {
-        broadcastState();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send(action);
-      }
+      if (isHost) broadcastState();
+      else if (hostConn && hostConn.open) hostConn.send(action);
     }
 
     function handleAction(action) {
@@ -3826,7 +205,7 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
 
       switch (action.type) {
         case 'ADD':
-          if (keys.length >= 100) return alert("最大100個まで追加可能です");
+          if (keys.length >= 100) return alert("最大100艇まで登録可能です");
           const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
           state.stopwatches[id] = {
             id,
@@ -3844,9 +223,7 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
           break;
 
         case 'DELETE_SELECTED':
-          selectedIds.forEach(swId => {
-            delete state.stopwatches[swId];
-          });
+          selectedIds.forEach(swId => delete state.stopwatches[swId]);
           selectedIds.clear();
           break;
 
@@ -3859,12 +236,11 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
           break;
 
         case 'RESET':
-          const swReset = state.stopwatches[action.id];
-          if (swReset) {
-            swReset.isRunning = false;
-            swReset.startTime = 0;
-            swReset.accumulatedTime = 0;
-            swReset.laps = [];
+          if (state.stopwatches[action.id]) {
+            state.stopwatches[action.id].isRunning = false;
+            state.stopwatches[action.id].startTime = 0;
+            state.stopwatches[action.id].accumulatedTime = 0;
+            state.stopwatches[action.id].laps = [];
           }
           break;
 
@@ -3882,9 +258,23 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
           Object.keys(state.stopwatches).forEach(swId => {
             const sw = state.stopwatches[swId];
             if (sw && sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
+              const currentSplit = sw.accumulatedTime + (now - sw.startTime);
+              const laps = sw.laps || [];
+              const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
+              const lapDuration = currentSplit - lastSplit;
+
+              laps.push({
+                lapTime: formatTime(lapDuration),
+                splitTime: formatTime(currentSplit),
+                rawSplit: currentSplit,
+                timestamp: now,
+                type: 'STOP'
+              });
+
+              sw.accumulatedTime = currentSplit;
               sw.isRunning = false;
               sw.startTime = 0;
+              sw.laps = laps;
             }
           });
           break;
@@ -3893,9 +283,23 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
           const sw = state.stopwatches[action.id];
           if (sw) {
             if (sw.isRunning) {
-              sw.accumulatedTime += (now - sw.startTime);
+              const currentSplit = sw.accumulatedTime + (now - sw.startTime);
+              const laps = sw.laps || [];
+              const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
+              const lapDuration = currentSplit - lastSplit;
+
+              laps.push({
+                lapTime: formatTime(lapDuration),
+                splitTime: formatTime(currentSplit),
+                rawSplit: currentSplit,
+                timestamp: now,
+                type: 'STOP'
+              });
+
+              sw.accumulatedTime = currentSplit;
               sw.isRunning = false;
               sw.startTime = 0;
+              sw.laps = laps;
             } else {
               sw.isRunning = true;
               sw.startTime = now;
@@ -3915,7 +319,8 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
               lapTime: formatTime(lapDuration),
               splitTime: formatTime(currentSplit),
               rawSplit: currentSplit,
-              timestamp: now
+              timestamp: now,
+              type: 'LAP'
             });
             swLap.laps = laps;
           }
@@ -3948,12 +353,11 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       });
     }
 
-    // --- UI操作関数 ---
     window.addTimer = () => dispatchAction({ type: 'ADD' });
     window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
     window.removeTimer = () => {
       const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("削除できる艇がありません");
+      if (keys.length === 0) return alert("削除する艇がありません");
 
       if (selectedIds.size > 0) {
         if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
@@ -3966,8 +370,7 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
     window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
     window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
     window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？
-（計測記録がすべて削除されます）")) {
+      if (confirm("すべてのストップウォッチをリセットしますか？\n（計測記録が消去されます）")) {
         dispatchAction({ type: 'RESET_ALL' });
       }
     };
@@ -3975,11 +378,11 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
     window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
     window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
     window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇にチェックを入れて選択してください");
+      if (selectedIds.size === 0) return alert("対象艇にチェックを入れて選択してください");
       dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
     };
 
-    // --- mm:ss.00 フォーマット表示 ---
+    // mm:ss.00 フォーマット
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -4010,15 +413,14 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       renderStructure();
     };
 
-    // LINE共有用URLコピー機能
     window.copyShareUrl = () => {
       const baseUrl = location.origin + location.pathname;
       const shareUrl = `${baseUrl}?openExternalBrowser=1#${roomCode}`;
       
       navigator.clipboard.writeText(shareUrl).then(() => {
-        showToast("LINE共有URLをコピーしました！");
+        showToast("共有URLをコピーしました！");
       }).catch(() => {
-        prompt("以下のURLをコピーしてLINEに送信してください:", shareUrl);
+        prompt("以下のURLをコピーして送信してください:", shareUrl);
       });
     };
 
@@ -4034,7 +436,117 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       }
     }
 
-    // --- Excel出力（横持ちフォーマット） ---
+    // CSVデータ生成共通処理
+    function generateCSVText() {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) {
+        alert("送信する計測データがありません");
+        return null;
+      }
+
+      let maxLaps = 0;
+      Object.values(state.stopwatches).forEach(sw => {
+        const lCount = (sw.laps || []).length;
+        if (lCount > maxLaps) maxLaps = lCount;
+      });
+
+      const header = ['艇名', '種別'];
+      for (let i = 1; i <= maxLaps; i++) {
+        header.push(`LAP${i}`);
+      }
+      const csvRows = [header.join(',')];
+
+      Object.values(state.stopwatches).forEach(sw => {
+        const laps = sw.laps || [];
+        const splitRow = [`"${sw.name.replace(/"/g, '""')}"`, 'SPLIT'];
+        const lapRow = [`"${sw.name.replace(/"/g, '""')}"`, 'LAP'];
+
+        if (laps.length === 0) {
+          splitRow.push(formatTime(getElapsedTime(sw)));
+          lapRow.push('-');
+        } else {
+          laps.forEach(lap => {
+            splitRow.push(lap.splitTime);
+            lapRow.push(lap.type === 'STOP' ? `${lap.lapTime}(STOP)` : lap.lapTime);
+          });
+        }
+
+        csvRows.push(splitRow.join(','));
+        csvRows.push(lapRow.join(','));
+      });
+
+      return csvRows.join('\n');
+    }
+
+    // LINEへデータ送信（Web Share API + LINE URLスキーム修復版）
+    window.shareLineCSV = async () => {
+      const csvText = generateCSVText();
+      if (!csvText) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const fileName = `Rowing_Result_${today}.csv`;
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8;' });
+      const file = new File([blob], fileName, { type: 'text/csv' });
+
+      // 1. Web Share APIでファイル共有（スマホ環境でLINEを選べます）
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Rowing計測結果CSV',
+            text: 'Rowingストップウォッチ計測データです。'
+          });
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      // 2. LINEアプリのスキーム直接起動 fallback
+      const textMessage = `【Rowing計測結果 (${today})】\n` + csvText;
+      const encodedMsg = encodeURIComponent(textMessage);
+
+      if (encodedMsg.length > 2000) {
+        alert("データ量が多いため、LINEテキスト送信制限を超えています。Excel出力機能をご利用ください。");
+        return;
+      }
+
+      // LINE URLスキームを起動
+      window.location.href = `https://line.me/R/msg/text/?${encodedMsg}`;
+    };
+
+    // Gmailアプリへデータ送信
+    window.shareGmailCSV = async () => {
+      const csvText = generateCSVText();
+      if (!csvText) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      const fileName = `Rowing_Result_${today}.csv`;
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8;' });
+      const file = new File([blob], fileName, { type: 'text/csv' });
+
+      // 1. Web Share API（スマホの共有メニューからGmailアプリを選択）
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: `Rowing計測結果_${today}`,
+            text: 'Rowingストップウォッチ計測データです。'
+          });
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+
+      // 2. mailto: スキームでメーラー/Gmailアプリ起動
+      const subject = encodeURIComponent(`Rowing計測結果 (${today})`);
+      const body = encodeURIComponent(`Rowingストップウォッチの計測結果データです:\n\n${csvText}`);
+      
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    };
+
+    // Excel書き出し
     window.exportExcel = () => {
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
@@ -4042,7 +554,7 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       const today = new Date().toISOString().slice(0, 10);
       const defaultFileName = `Rowing_Result_${today}`;
       
-      const userInput = prompt("保存するExcelファイル名を入力してください（.xlsx は自動付与）:", defaultFileName);
+      const userInput = prompt("保存するExcelファイル名を入力してください:", defaultFileName);
       if (userInput === null) return;
       
       const fileName = userInput.trim() || defaultFileName;
@@ -4055,38 +567,40 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
         if (lCount > maxLaps) maxLaps = lCount;
       });
 
-      const header = ['艇名', '項目'];
+      const header = ['艇名', 'データ種別'];
       for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP ${i}`);
+        header.push(`LAP${i}`);
       }
       aoa.push(header);
 
       Object.values(state.stopwatches).forEach(sw => {
         const laps = sw.laps || [];
-        const lapRow = [sw.name, 'LAP'];
         const splitRow = [sw.name, 'SPLIT'];
+        const lapRow = [sw.name, 'LAP'];
 
         if (laps.length === 0) {
-          lapRow.push('-');
           splitRow.push(formatTime(getElapsedTime(sw)));
+          lapRow.push('-');
         } else {
           laps.forEach(lap => {
-            lapRow.push(lap.lapTime);
-            splitRow.push(lap.splitTime);
+            const splitLabel = lap.splitTime;
+            const lapLabel = lap.type === 'STOP' ? `${lap.lapTime} [STOP]` : lap.lapTime;
+            splitRow.push(splitLabel);
+            lapRow.push(lapLabel);
           });
         }
 
-        aoa.push(lapRow);
         aoa.push(splitRow);
+        aoa.push(lapRow);
       });
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
+      XLSX.utils.book_append_sheet(wb, ws, "Rowing計測結果");
       XLSX.writeFile(wb, finalFileName);
     };
 
-    // --- UI構造描画 (スマホ画面で横2列×縦3列[計6個]に最適化したカードレイアウト) ---
+    // UI描画
     function renderStructure() {
       const container = document.getElementById("app");
       const keys = Object.keys(state.stopwatches);
@@ -4098,11 +612,11 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
 
       if (keys.length === 0) {
         container.innerHTML = `
-          <div class="col-span-full bg-white p-6 rounded-2xl shadow-sm text-center border border-slate-200 py-10">
-            <p class="text-slate-600 font-bold mb-1">ストップウォッチがありません</p>
-            <p class="text-xs text-slate-400 mb-4">「+ 艇を追加」ボタンを押してください</p>
-            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl shadow text-xs inline-flex items-center gap-1 transition">
-              + 最初の艇を追加
+          <div class="col-span-full bg-white p-6 rounded-xl shadow-sm text-center border border-slate-200 py-10">
+            <p class="text-slate-700 font-bold text-sm mb-1">ストップウォッチがありません</p>
+            <p class="text-xs text-slate-400 mb-3">「+ 追加」を押してスタートしてください</p>
+            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-lg shadow text-xs">
+              + 追加
             </button>
           </div>
         `;
@@ -4115,56 +629,69 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
         const isSelected = selectedIds.has(id);
 
         return `
-          <div class="bg-white p-2 sm:p-3.5 rounded-xl sm:rounded-2xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200/80 bg-blue-50/20' : 'border-slate-200/90'} transition-all flex flex-col justify-between">
+          <div class="bg-white p-2 rounded-xl shadow-sm border transition-all ${
+            sw.isRunning 
+              ? 'border-emerald-500 ring-2 ring-emerald-100' 
+              : isSelected 
+                ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/10' 
+                : 'border-slate-200'
+          }">
             
-            <div>
-              <!-- ヘッダー: 選択チェックボックス + 艇名入力 + 個別削除 -->
-              <div class="flex items-center justify-between gap-1 mb-1.5">
-                <div class="flex items-center gap-1 flex-1 min-w-0">
-                  <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
-                  <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名" class="font-bold text-slate-800 text-xs sm:text-base border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-0.5 py-0 rounded transition truncate">
-                </div>
-                <button onclick="deleteTimer('${id}')" title="削除" class="text-slate-300 hover:text-red-500 active:text-red-600 p-0.5 rounded transition flex-shrink-0">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                </button>
+            <!-- ヘッダー (選択 + 艇名 + 削除) -->
+            <div class="flex items-center justify-between gap-1 mb-1">
+              <div class="flex items-center gap-1 flex-1 min-w-0">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
+                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名" class="font-bold text-slate-800 text-xs border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-0.5 py-0.5 truncate">
               </div>
 
-              <!-- mm:ss.00 メインタイマー表示 (スマホ2列表示でも収まる最適サイズ) -->
-              <div class="bg-slate-900 text-emerald-400 font-mono font-black text-lg xs:text-xl sm:text-3xl text-center py-1.5 sm:py-2.5 px-1 rounded-lg sm:rounded-xl my-1.5 shadow-inner tracking-wider border border-slate-800">
-                <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
-              </div>
-
-              <!-- 操作ボタン（START/STOP, LAP, RESET — スマホ2列用コンパクト設計） -->
-              <div class="grid grid-cols-3 gap-1 mb-2">
-                <button onclick="toggleStart('${id}')" class="min-h-[38px] sm:min-h-[44px] rounded-lg sm:rounded-xl font-bold text-white shadow active:scale-95 transition-all text-[11px] sm:text-sm flex items-center justify-center ${sw.isRunning ? 'bg-red-500 hover:bg-red-600 active:bg-red-700' : 'bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700'}">
-                  ${sw.isRunning ? 'STOP' : 'START'}
-                </button>
-                
-                <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[38px] sm:min-h-[44px] rounded-lg sm:rounded-xl font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-[11px] sm:text-sm flex items-center justify-center disabled:opacity-35 disabled:cursor-not-allowed">
-                  LAP
-                </button>
-
-                <button onclick="resetTimer('${id}')" class="min-h-[38px] sm:min-h-[44px] rounded-lg sm:rounded-xl font-bold bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white shadow active:scale-95 transition-all text-sm flex items-center justify-center">
-                  RESET
-                </button>
-              </div>
+              <button onclick="deleteTimer('${id}')" title="削除" class="text-slate-300 hover:text-rose-500 p-0.5 rounded transition flex-shrink-0">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+              </button>
             </div>
 
-            <!-- LAP / SPLIT 履歴リスト -->
-            <div class="border-t border-slate-100 pt-1.5 text-[10px] sm:text-xs font-mono">
-              <div class="flex justify-between text-slate-400 mb-0.5 px-0.5 font-sans text-[10px] font-bold">
-                <span class="w-6">LAP</span>
-                <span class="w-1/2 text-right">LAP</span>
-                <span class="w-1/2 text-right">SPLIT</span>
+            <!-- mm:ss.00 タイム表示 -->
+            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-xl sm:text-2xl text-center py-1.5 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tight">
+              <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
+            </div>
+
+            <!-- 操作ボタン -->
+            <div class="grid grid-cols-3 gap-1 my-1.5">
+              <button onclick="toggleStart('${id}')" class="min-h-[32px] rounded-lg font-bold text-white shadow active:scale-95 transition-all text-[11px] flex items-center justify-center ${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'}">
+                ${sw.isRunning ? 'STOP' : 'START'}
+              </button>
+              
+              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[32px] rounded-lg font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-[11px] flex items-center justify-center disabled:opacity-30">
+                LAP
+              </button>
+
+              <button onclick="resetTimer('${id}')" class="min-h-[32px] rounded-lg font-bold bg-slate-500 hover:bg-slate-600 text-white shadow active:scale-95 transition-all text-[11px] flex items-center justify-center">
+                RESET
+              </button>
+            </div>
+
+            <!-- LAP / SPLIT 履歴 -->
+            <div class="border-t border-slate-100 pt-1 text-[10px] font-mono">
+              <div class="flex justify-between items-center text-slate-400 mb-0.5 px-0.5 font-sans font-bold text-[9px]">
+                <span>No.</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-amber-600">LAP</span>
+                  <span class="text-slate-300">|</span>
+                  <span class="text-blue-600">SPLIT</span>
+                </div>
               </div>
               
-              <div class="max-h-24 sm:max-h-28 overflow-y-auto space-y-0.5 pr-0.5">
-                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-2 font-sans text-[10px]">記録なし</div>' : 
+              <div class="max-h-20 overflow-y-auto space-y-0.5 pr-0.5">
+                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-1 font-sans text-[10px]">記録なし</div>' : 
                   laps.slice().reverse().map((lap, i) => `
-                    <div class="flex justify-between items-center py-0.5 px-1 rounded bg-slate-50 border border-slate-100">
-                      <span class="font-bold text-slate-400 w-6 text-[9px]">#${laps.length - i}</span>
-                      <span class="text-amber-600 font-bold w-1/2 text-right text-[10px] sm:text-xs">${lap.lapTime}</span>
-                      <span class="text-blue-600 font-bold w-1/2 text-right text-[10px] sm:text-xs">${lap.splitTime}</span>
+                    <div class="py-0.5 px-1 rounded flex items-center justify-between ${lap.type === 'STOP' ? 'bg-rose-50 border border-rose-100' : 'bg-slate-50 border border-slate-100'}">
+                      <span class="font-bold text-[9px] ${lap.type === 'STOP' ? 'text-rose-600' : 'text-slate-400'}">
+                        #${laps.length - i}${lap.type === 'STOP' ? ' (STOP)' : ''}
+                      </span>
+                      <div class="flex items-center gap-1 font-bold text-[10px]">
+                        <span class="text-amber-600">${lap.lapTime}</span>
+                        <span class="text-slate-300 font-normal">|</span>
+                        <span class="text-blue-600">${lap.splitTime}</span>
+                      </div>
                     </div>
                   `).join('')
                 }
@@ -4176,7 +703,6 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       }).join('');
     }
 
-    // 画面再描画を行わずに数字のみを毎フレーム(60fps)更新
     function updateTimerNumbers() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
@@ -4190,11 +716,9 @@ UIサイズの最適化: 2列表示でもタイマー（mm:ss.00）や操作ボ�
       requestAnimationFrame(updateTimerNumbers);
     }
 
-    // 初期化実行
     initP2P();
+    renderStructure();
     requestAnimationFrame(updateTimerNumbers);
   </script>
 </body>
 </html>
-index.html
-「index.html」を表示しています。
