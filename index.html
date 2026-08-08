@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rowing マルチストップウォッチ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen p-3 md:p-6">
+  <div class="max-w-6xl mx-auto">
+    
+    <!-- ヘッダー・一括操作バー -->
+    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
+        <div class="flex items-center space-x-2">
+          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
+          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
+        </div>
+        <div class="text-xs text-gray-400">
+          ※同じURL（部屋コード付き）を開いた端末同士でリアルタイム同期
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center space-x-3">
+          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
+            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
+            <span>全選択</span>
+          </label>
+          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
+            艇数: <span id="count" class="text-blue-600">0</span> / 100
+          </span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            ▶ 選択艇を同時スタート
+          </button>
+          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            ■ 全体STOP
+          </button>
+          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            + 艇を追加
+          </button>
+          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            - 艇削除
+          </button>
+          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            ↺ 全体リセット
+          </button>
+          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+            Excel出力
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ストップウォッチカード一覧 -->
+    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+  </div>
+
+  <script>
+    // --- データ構造 ---
+    let state = { stopwatches: {} };
+    let selectedIds = new Set();
+    let isHost = true;
+    let peer = null;
+    let hostConn = null;
+    let clientConns = [];
+
+    // 部屋コード制御
+    let roomCode = location.hash.replace('#', '');
+    if (!roomCode) {
+      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
+      location.hash = roomCode;
+    }
+    document.getElementById('roomCodeDisplay').innerText = roomCode;
+    const hostPeerId = `rowing-app-room-v7-${roomCode}`;
+
+    // --- P2P リアルタイム同期設定 ---
+    function initP2P() {
+      try {
+        peer = new Peer(hostPeerId);
+        peer.on('open', () => {
+          isHost = true;
+          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
+        });
+        peer.on('connection', (conn) => {
+          clientConns.push(conn);
+          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
+          conn.on('data', (data) => handleAction(data));
+          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
+        });
+        peer.on('error', (err) => {
+          if (err.type === 'unavailable-id') {
+            isHost = false;
+            peer = new Peer();
+            peer.on('open', () => {
+              hostConn = peer.connect(hostPeerId);
+              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
+              hostConn.on('data', (data) => {
+                if (data.type === 'SYNC_STATE') {
+                  state = data.state;
+                  renderStructure();
+                }
+              });
+            });
+          }
+        });
+      } catch (e) {
+        console.warn("P2P Init Error:", e);
+      }
+    }
+
+    function updateStatus(text, colorClass) {
+      const badge = document.getElementById('statusBadge');
+      if (badge) {
+        badge.innerText = text;
+        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
+      }
+    }
+
+    // --- アクションの伝播と実行 ---
+    function dispatchAction(action) {
+      handleAction(action);
+      if (isHost) {
+        broadcastState();
+      } else if (hostConn && hostConn.open) {
+        hostConn.send(action);
+      }
+    }
+
+    function handleAction(action) {
+      const now = Date.now();
+      const keys = Object.keys(state.stopwatches);
+
+      switch (action.type) {
+        case 'ADD':
+          if (keys.length >= 100) return alert("最大100個まで追加可能です");
+          const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
+          state.stopwatches[id] = {
+            id, name: `艇 ${keys.length + 1}`,
+            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
+          };
+          break;
+
+        case 'DELETE':
+          delete state.stopwatches[action.id];
+          selectedIds.delete(action.id);
+          break;
+
+        case 'DELETE_SELECTED':
+          selectedIds.forEach(swId => {
+            delete state.stopwatches[swId];
+          });
+          selectedIds.clear();
+          break;
+
+        case 'REMOVE_LAST':
+          if (keys.length > 0) {
+            const lastId = keys[keys.length - 1];
+            delete state.stopwatches[lastId];
+            selectedIds.delete(lastId);
+          }
+          break;
+
+        case 'RESET':
+          const swReset = state.stopwatches[action.id];
+          if (swReset) {
+            swReset.isRunning = false;
+            swReset.startTime = 0;
+            swReset.accumulatedTime = 0;
+            swReset.laps = [];
+          }
+          break;
+
+        case 'RESET_ALL':
+          Object.keys(state.stopwatches).forEach(swId => {
+            const sw = state.stopwatches[swId];
+            sw.isRunning = false;
+            sw.startTime = 0;
+            sw.accumulatedTime = 0;
+            sw.laps = [];
+          });
+          break;
+
+        case 'STOP_ALL':
+          Object.keys(state.stopwatches).forEach(swId => {
+            const sw = state.stopwatches[swId];
+            if (sw && sw.isRunning) {
+              sw.accumulatedTime += (now - sw.startTime);
+              sw.isRunning = false;
+              sw.startTime = 0;
+            }
+          });
+          break;
+
+        case 'TOGGLE_START':
+          const sw = state.stopwatches[action.id];
+          if (sw) {
+            if (sw.isRunning) {
+              sw.accumulatedTime += (now - sw.startTime);
+              sw.isRunning = false;
+              sw.startTime = 0;
+            } else {
+              sw.isRunning = true;
+              sw.startTime = now;
+            }
+          }
+          break;
+
+        case 'ADD_LAP':
+          const swLap = state.stopwatches[action.id];
+          if (swLap && swLap.isRunning) {
+            const currentSplit = swLap.accumulatedTime + (now - swLap.startTime);
+            const laps = swLap.laps || [];
+            const lastSplit = laps.length > 0 ? laps[laps.length - 1].rawSplit : 0;
+            const lapDuration = currentSplit - lastSplit;
+
+            laps.push({
+              lapTime: formatTime(lapDuration),
+              splitTime: formatTime(currentSplit),
+              rawSplit: currentSplit,
+              timestamp: now
+            });
+            swLap.laps = laps;
+          }
+          break;
+
+        case 'UPDATE_NAME':
+          if (state.stopwatches[action.id]) {
+            state.stopwatches[action.id].name = action.name;
+          }
+          break;
+
+        case 'BATCH_START':
+          (action.ids || []).forEach(swId => {
+            const target = state.stopwatches[swId];
+            if (target && !target.isRunning) {
+              target.isRunning = true;
+              target.startTime = now;
+            }
+          });
+          break;
+      }
+
+      if (isHost) broadcastState();
+      renderStructure();
+    }
+
+    function broadcastState() {
+      clientConns.forEach(conn => {
+        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
+      });
+    }
+
+    // --- 操作関数の定義 ---
+    window.addTimer = () => dispatchAction({ type: 'ADD' });
+    window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
+    window.removeTimer = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("削除できる艇がありません");
+
+      if (selectedIds.size > 0) {
+        if (confirm(`選択中の ${selectedIds.size} 艇を削除しますか？`)) {
+          dispatchAction({ type: 'DELETE_SELECTED' });
+        }
+      } else {
+        dispatchAction({ type: 'REMOVE_LAST' });
+      }
+    };
+    window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
+    window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
+    window.resetAllTimers = () => {
+      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべての記録が消去されます）")) {
+        dispatchAction({ type: 'RESET_ALL' });
+      }
+    };
+    window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
+    window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
+    window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
+    window.batchStart = () => {
+      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
+      dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
+    };
+
+    // --- タイムフォーマット (mm:ss.00) ---
+    function formatTime(ms) {
+      if (!ms || ms < 0) ms = 0;
+      const m = Math.floor(ms / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      const h = Math.floor((ms % 1000) / 10);
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(h).padStart(2, '0')}`;
+    }
+
+    function getElapsedTime(sw) {
+      if (!sw) return 0;
+      let elapsed = sw.accumulatedTime || 0;
+      if (sw.isRunning && sw.startTime) {
+        elapsed += (Date.now() - sw.startTime);
+      }
+      return elapsed;
+    }
+
+    window.toggleSelect = (id) => {
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      renderStructure();
+    };
+
+    window.toggleSelectAll = (e) => {
+      const keys = Object.keys(state.stopwatches);
+      if (e.target.checked) keys.forEach(id => selectedIds.add(id));
+      else selectedIds.clear();
+      renderStructure();
+    };
+
+    // --- Excel出力 (ファイル名入力機能付き) ---
+    window.exportExcel = () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultFileName = `Rowing_Result_${today}`;
+      
+      const userInput = prompt("保存するファイル名を入力してください（.xlsx は自動で付きます）:", defaultFileName);
+      
+      // キャンセルボタンが押された場合は処理中断
+      if (userInput === null) return;
+      
+      const fileName = userInput.trim() || defaultFileName;
+      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
+
+      const aoa = [];
+      
+      let maxLaps = 0;
+      Object.values(state.stopwatches).forEach(sw => {
+        const lCount = (sw.laps || []).length;
+        if (lCount > maxLaps) maxLaps = lCount;
+      });
+
+      const header = ['艇名', '項目'];
+      for (let i = 1; i <= maxLaps; i++) {
+        header.push(`LAP ${i}`);
+      }
+      aoa.push(header);
+
+      Object.values(state.stopwatches).forEach(sw => {
+        const laps = sw.laps || [];
+        
+        const lapRow = [sw.name, 'LAP'];
+        const splitRow = [sw.name, 'SPLIT'];
+
+        if (laps.length === 0) {
+          lapRow.push('-');
+          splitRow.push(formatTime(getElapsedTime(sw)));
+        } else {
+          laps.forEach(lap => {
+            lapRow.push(lap.lapTime);
+            splitRow.push(lap.splitTime);
+          });
+        }
+
+        aoa.push(lapRow);
+        aoa.push(splitRow);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
+      XLSX.writeFile(wb, finalFileName);
+    };
+
+    // --- UI構造描画 ---
+    function renderStructure() {
+      const container = document.getElementById("app");
+      const keys = Object.keys(state.stopwatches);
+      document.getElementById("count").innerText = keys.length;
+
+      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
+      const selectAllEl = document.getElementById("selectAllCheckbox");
+      if (selectAllEl) selectAllEl.checked = allSelected;
+
+      container.innerHTML = keys.map(id => {
+        const sw = state.stopwatches[id];
+        const laps = sw.laps || [];
+        const isSelected = selectedIds.has(id);
+
+        return `
+          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center space-x-2 w-full mr-2">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
+                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
+              </div>
+              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
+            </div>
+
+            <!-- mm:ss.00 表示 -->
+            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
+              ${formatTime(getElapsedTime(sw))}
+            </div>
+
+            <!-- ボタンエリア（START/STOP, LAP, RESET） -->
+            <div class="grid grid-cols-3 gap-2 mb-4">
+              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
+                ${sw.isRunning ? 'STOP' : 'START'}
+              </button>
+              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
+                LAP
+              </button>
+              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
+                RESET
+              </button>
+            </div>
+
+            <!-- LAP / SPLIT 履歴 -->
+            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
+              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
+                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
+              </div>
+              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
+                laps.slice().reverse().map((lap, i) => `
+                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
+                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
+                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
+                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
+                  </div>
+                `).join('')
+              }
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 数値の描画更新
+    function updateTimerNumbers() {
+      Object.keys(state.stopwatches).forEach(id => {
+        const sw = state.stopwatches[id];
+        if (sw && sw.isRunning) {
+          const el = document.getElementById(`display-${id}`);
+          if (el) {
+            el.innerText = formatTime(getElapsedTime(sw));
+          }
+        }
+      });
+      requestAnimationFrame(updateTimerNumbers);
+    }
+
+    initP2P();
+    renderStructure();
+    requestAnimationFrame(updateTimerNumbers);
+  </script>
+</body>
+</html>
