@@ -690,7 +690,7 @@
               </button>
             </div>
 
-            <!-- LAP & SPLIT 表示領域（2行分のみ表示: max-h-[44px]） -->
+            <!-- LAP & SPLIT 表示領域（1行分のみ表示: max-h-[22px]） -->
             <div class="border-t border-slate-100 pt-1 text-[10px] font-mono">
               <div class="flex justify-between items-center text-slate-400 mb-0.5 px-0.5 font-sans font-bold text-[9px]">
                 <span>No.</span>
@@ -701,8 +701,8 @@
                 </div>
               </div>
               
-              <div class="max-h-[44px] overflow-y-auto space-y-0.5 pr-0.5">
-                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-1 font-sans text-[10px]">記録なし</div>' : 
+              <div class="max-h-[22px] overflow-y-auto space-y-0.5 pr-0.5">
+                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-0.5 font-sans text-[10px]">記録なし</div>' : 
                   laps.slice().reverse().map((lap, i) => `
                     <div class="py-0.5 px-1 rounded flex items-center justify-between ${lap.type === 'STOP' ? 'bg-rose-50 border border-rose-100' : 'bg-slate-50 border border-slate-100'}">
                       <span class="font-bold text-[9px] ${lap.type === 'STOP' ? 'text-rose-600' : 'text-slate-400'}">
