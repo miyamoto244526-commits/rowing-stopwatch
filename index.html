@@ -93,13 +93,8 @@
             全体リセット
           </button>
 
-          <button onclick="shareLineCSV()" class="min-h-[34px] bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049a41] text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95 md:ml-auto">
-            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M24 10.304c0-5.231-5.383-9.471-12-9.471s-12 4.24-12 9.471c0 4.69 4.269 8.601 10.026 9.324.39.085.922.258 1.057.591.121.301.079.766.038 1.08-.085.643-.389 2.493-.423 2.882-.057.659.308.647.647.433.339-.214 5.39-3.178 7.362-5.441 3.252-1.986 5.302-5.021 5.302-8.869z"/></svg>
-            LINE送信
-          </button>
-
-          <button onclick="exportExcel()" class="min-h-[34px] bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-3.5 h-3.5 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+          <button onclick="exportExcel()" class="min-h-[34px] bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95 md:ml-auto">
+            <svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
             Excel出力
           </button>
         </div>
@@ -125,7 +120,11 @@
     let hostConn = null;
     let clientConns = [];
 
-    // STUNサーバー設定（モバイル通信回線でのP2P接続確立用）
+    // 相対時間補正用タイムスタンプ
+    let lastSyncServerTime = Date.now();
+    let lastSyncLocalTime = Date.now();
+
+    // 4G/5Gキャリア通信対応 STUN サーバー
     const peerConfig = {
       config: {
         iceServers: [
@@ -142,7 +141,17 @@
       location.hash = roomCode;
     }
     document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v15-${roomCode}`;
+    const hostPeerId = `rowing-app-room-v18-${roomCode}`;
+
+    // ホスト基準の推定現在時刻を取得
+    function getNow() {
+      if (isHost) {
+        return Date.now();
+      } else {
+        const localElapsed = Date.now() - lastSyncLocalTime;
+        return lastSyncServerTime + localElapsed;
+      }
+    }
 
     function initP2P() {
       try {
@@ -150,13 +159,13 @@
 
         peer.on('open', () => {
           isHost = true;
-          updateStatus('ホスト (接続待ち)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
+          updateStatus('ホスト (親機)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
 
         peer.on('connection', (conn) => {
           clientConns.push(conn);
           conn.on('open', () => {
-            conn.send({ type: 'SYNC_STATE', state });
+            conn.send({ type: 'SYNC_STATE', state, serverTime: Date.now() });
             updateHostStatus();
           });
 
@@ -177,16 +186,15 @@
 
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
-            // 他の端末がすでにホストとして存在する場合、子機として接続
             isHost = false;
             peer = new Peer(peerConfig);
             peer.on('open', () => connectToHost());
           } else {
-            updateStatus('通信エラー (再読み込みしてください)', 'bg-rose-100 text-rose-800 border-rose-300');
+            updateStatus('通信エラー', 'bg-rose-100 text-rose-800 border-rose-300');
           }
         });
       } catch (e) {
-        updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
+        updateStatus('オフライン', 'bg-amber-100 text-amber-800 border-amber-300');
       }
     }
 
@@ -195,30 +203,34 @@
       hostConn = peer.connect(hostPeerId, { reliable: true });
 
       hostConn.on('open', () => {
-        updateStatus('同期中 (接続完了)', 'bg-blue-100 text-blue-800 border-blue-300');
+        updateStatus('同期中 (子機)', 'bg-blue-100 text-blue-800 border-blue-300');
       });
 
       hostConn.on('data', (data) => {
         if (data.type === 'SYNC_STATE') {
+          if (data.serverTime) {
+            lastSyncServerTime = data.serverTime;
+            lastSyncLocalTime = Date.now();
+          }
           state = data.state;
           renderStructure();
         }
       });
 
       hostConn.on('close', () => {
-        updateStatus('切断されました (再試行中)', 'bg-rose-100 text-rose-800 border-rose-300');
-        setTimeout(connectToHost, 3000);
+        updateStatus('切断 (再接続中...)', 'bg-rose-100 text-rose-800 border-rose-300');
+        setTimeout(connectToHost, 2000);
       });
 
       hostConn.on('error', () => {
-        updateStatus('接続エラー', 'bg-rose-100 text-rose-800 border-rose-300');
+        updateStatus('接続失敗', 'bg-rose-100 text-rose-800 border-rose-300');
       });
     }
 
     function updateHostStatus() {
       if (isHost) {
         const count = clientConns.filter(c => c.open).length;
-        updateStatus(`ホスト (接続中: ${count}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
+        updateStatus(`ホスト (接続端末: ${count}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
@@ -231,7 +243,6 @@
       }
     }
 
-    // アクションの送信・実行
     function dispatchAction(action) {
       if (isHost) {
         handleAction(action);
@@ -239,18 +250,17 @@
       } else if (hostConn && hostConn.open) {
         hostConn.send(action);
       } else {
-        // 親機・子機が確立する前の単独操作時
         handleAction(action);
       }
     }
 
     function handleAction(action) {
-      const now = Date.now();
+      const now = getNow();
       const keys = Object.keys(state.stopwatches);
 
       switch (action.type) {
         case 'ADD':
-          if (keys.length >= 100) return alert("最大100艇まで登録可能です");
+          if (keys.length >= 100) return alert("最大100艇まで追加可能です");
           const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
           state.stopwatches[id] = {
             id,
@@ -392,8 +402,9 @@
     }
 
     function broadcastState() {
+      const payload = { type: 'SYNC_STATE', state, serverTime: Date.now() };
       clientConns.forEach(conn => {
-        if (conn.open) conn.send({ type: 'SYNC_STATE', state });
+        if (conn.open) conn.send(payload);
       });
     }
 
@@ -414,7 +425,7 @@
     window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
     window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
     window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（計測記録が消去されます）")) {
+      if (confirm("すべてのストップウォッチをリセットしますか？")) {
         dispatchAction({ type: 'RESET_ALL' });
       }
     };
@@ -439,9 +450,9 @@
       if (!sw) return 0;
       let elapsed = sw.accumulatedTime || 0;
       if (sw.isRunning && sw.startTime) {
-        elapsed += (Date.now() - sw.startTime);
+        elapsed += (getNow() - sw.startTime);
       }
-      return elapsed;
+      return Math.max(0, elapsed);
     }
 
     window.toggleSelect = (id) => {
@@ -458,13 +469,11 @@
     };
 
     window.copyShareUrl = () => {
-      const baseUrl = location.origin + location.pathname;
-      const shareUrl = `${baseUrl}?openExternalBrowser=1#${roomCode}`;
-      
+      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
       navigator.clipboard.writeText(shareUrl).then(() => {
         showToast("共有URLをコピーしました！");
       }).catch(() => {
-        prompt("以下のURLをコピーして送信してください:", shareUrl);
+        prompt("以下のURLをコピーして共有してください:", shareUrl);
       });
     };
 
@@ -480,72 +489,13 @@
       }
     }
 
-    // LINEへデータ送信
-    window.shareLineCSV = async () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("送信する計測データがありません");
-
-      let maxLaps = 0;
-      Object.values(state.stopwatches).forEach(sw => {
-        const lCount = (sw.laps || []).length;
-        if (lCount > maxLaps) maxLaps = lCount;
-      });
-
-      const header = ['艇名', '種別'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`LAP${i}`);
-      }
-      const csvRows = [header.join(',')];
-
-      Object.values(state.stopwatches).forEach(sw => {
-        const laps = sw.laps || [];
-        const splitRow = [`"${sw.name.replace(/"/g, '""')}"`, 'SPLIT'];
-        const lapRow = [`"${sw.name.replace(/"/g, '""')}"`, 'LAP'];
-
-        if (laps.length === 0) {
-          splitRow.push(formatTime(getElapsedTime(sw)));
-          lapRow.push('-');
-        } else {
-          laps.forEach(lap => {
-            splitRow.push(lap.splitTime);
-            lapRow.push(lap.type === 'STOP' ? `${lap.lapTime}(STOP)` : lap.lapTime);
-          });
-        }
-
-        csvRows.push(splitRow.join(','));
-        csvRows.push(lapRow.join(','));
-      });
-
-      const csvText = csvRows.join('\n');
-      const today = new Date().toISOString().slice(0, 10);
-      const fileName = `Rowing_Result_${today}.csv`;
-      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8;' });
-      const file = new File([blob], fileName, { type: 'text/csv' });
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: 'Rowing計測結果CSV',
-            text: 'Rowingストップウォッチ計測データです。'
-          });
-          return;
-        } catch (err) {
-          if (err.name === 'AbortError') return;
-        }
-      }
-
-      const textMessage = `【Rowing計測結果 (${today})】\n` + csvText;
-      window.location.href = `https://line.me/R/msg/text/?${encodeURIComponent(textMessage)}`;
-    };
-
-    // Excel書き出し
+    // Excel出力機能 (.xlsx)
     window.exportExcel = () => {
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
 
       const today = new Date().toISOString().slice(0, 10);
-      const defaultFileName = `Rowing_Result_${today}`;
+      const defaultFileName = `Rowing_Result_${today}.xlsx`;
       
       const userInput = prompt("保存するExcelファイル名を入力してください:", defaultFileName);
       if (userInput === null) return;
@@ -576,10 +526,8 @@
           lapRow.push('-');
         } else {
           laps.forEach(lap => {
-            const splitLabel = lap.splitTime;
-            const lapLabel = lap.type === 'STOP' ? `${lap.lapTime} [STOP]` : lap.lapTime;
-            splitRow.push(splitLabel);
-            lapRow.push(lapLabel);
+            splitRow.push(lap.splitTime);
+            lapRow.push(lap.type === 'STOP' ? `${lap.lapTime} [STOP]` : lap.lapTime);
           });
         }
 
@@ -589,11 +537,10 @@
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Rowing計測結果");
+      XLSX.utils.book_append_sheet(wb, ws, "計測結果");
       XLSX.writeFile(wb, finalFileName);
     };
 
-    // UI描画
     function renderStructure() {
       const container = document.getElementById("app");
       const keys = Object.keys(state.stopwatches);
@@ -607,7 +554,7 @@
         container.innerHTML = `
           <div class="col-span-full bg-white p-6 rounded-xl shadow-sm text-center border border-slate-200 py-10">
             <p class="text-slate-700 font-bold text-sm mb-1">ストップウォッチがありません</p>
-            <p class="text-xs text-slate-400 mb-3">「+ 追加」を押してスタートしてください</p>
+            <p class="text-xs text-slate-400 mb-3">「+ 追加」を押して作成してください（最大100個）</p>
             <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-lg shadow text-xs">
               + 追加
             </button>
@@ -630,7 +577,6 @@
                 : 'border-slate-200'
           }">
             
-            <!-- ヘッダー (選択 + 艇名 + 削除) -->
             <div class="flex items-center justify-between gap-1 mb-1">
               <div class="flex items-center gap-1 flex-1 min-w-0">
                 <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
@@ -642,12 +588,10 @@
               </button>
             </div>
 
-            <!-- mm:ss.00 タイム表示 -->
             <div class="bg-slate-900 text-emerald-400 font-mono font-black text-xl sm:text-2xl text-center py-1.5 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tight">
               <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
             </div>
 
-            <!-- 操作ボタン -->
             <div class="grid grid-cols-3 gap-1 my-1.5">
               <button onclick="toggleStart('${id}')" class="min-h-[32px] rounded-lg font-bold text-white shadow active:scale-95 transition-all text-[11px] flex items-center justify-center ${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'}">
                 ${sw.isRunning ? 'STOP' : 'START'}
@@ -662,7 +606,6 @@
               </button>
             </div>
 
-            <!-- LAP / SPLIT 履歴 -->
             <div class="border-t border-slate-100 pt-1 text-[10px] font-mono">
               <div class="flex justify-between items-center text-slate-400 mb-0.5 px-0.5 font-sans font-bold text-[9px]">
                 <span>No.</span>
@@ -696,6 +639,7 @@
       }).join('');
     }
 
+    // 画面数字更新ルーチン（毎フレーム実行）
     function updateTimerNumbers() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
@@ -708,6 +652,19 @@
       });
       requestAnimationFrame(updateTimerNumbers);
     }
+
+    // スマホのバックグラウンド対策用タイマー（20ms周期）
+    setInterval(() => {
+      Object.keys(state.stopwatches).forEach(id => {
+        const sw = state.stopwatches[id];
+        if (sw && sw.isRunning) {
+          const el = document.getElementById(`display-${id}`);
+          if (el) {
+            el.innerText = formatTime(getElapsedTime(sw));
+          }
+        }
+      });
+    }, 20);
 
     initP2P();
     renderStructure();
