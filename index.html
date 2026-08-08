@@ -649,6 +649,7 @@
         const sw = state.stopwatches[id];
         const laps = sw.laps || [];
         const isSelected = selectedIds.has(id);
+        const lastLap = laps.length > 0 ? laps[laps.length - 1] : null;
 
         return `
           <div class="bg-white p-2 rounded-xl shadow-sm border transition-all ${
@@ -670,8 +671,8 @@
               </button>
             </div>
 
-            <!-- mm:ss.00 表示 -->
-            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-xl sm:text-2xl text-center py-1.5 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tight">
+            <!-- mm:ss.00 表示（スマホでも絶対に改行されず1行で収まる設定） -->
+            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-base sm:text-xl md:text-2xl text-center py-1 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tighter whitespace-nowrap overflow-hidden">
               <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
             </div>
 
@@ -690,10 +691,10 @@
               </button>
             </div>
 
-            <!-- LAP & SPLIT 表示領域（1行分のみ表示: max-h-[22px]） -->
+            <!-- LAP & SPLIT 表示領域（最新1件のみを確実に1行で表示） -->
             <div class="border-t border-slate-100 pt-1 text-[10px] font-mono">
               <div class="flex justify-between items-center text-slate-400 mb-0.5 px-0.5 font-sans font-bold text-[9px]">
-                <span>No.</span>
+                <span>最新記録</span>
                 <div class="flex items-center gap-1.5">
                   <span class="text-amber-600">LAP</span>
                   <span class="text-slate-300">|</span>
@@ -701,21 +702,19 @@
                 </div>
               </div>
               
-              <div class="max-h-[22px] overflow-y-auto space-y-0.5 pr-0.5">
-                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-0.5 font-sans text-[10px]">記録なし</div>' : 
-                  laps.slice().reverse().map((lap, i) => `
-                    <div class="py-0.5 px-1 rounded flex items-center justify-between ${lap.type === 'STOP' ? 'bg-rose-50 border border-rose-100' : 'bg-slate-50 border border-slate-100'}">
-                      <span class="font-bold text-[9px] ${lap.type === 'STOP' ? 'text-rose-600' : 'text-slate-400'}">
-                        #${laps.length - i}${lap.type === 'STOP' ? ' (STOP)' : ''}
-                      </span>
-                      <div class="flex items-center gap-1 font-bold text-[10px]">
-                        <span class="text-amber-600">${lap.lapTime}</span>
-                        <span class="text-slate-300 font-normal">|</span>
-                        <span class="text-blue-600">${lap.splitTime}</span>
-                      </div>
+              <div class="h-[20px] overflow-hidden pr-0.5">
+                ${!lastLap ? '<div class="text-center text-slate-300 py-0.5 font-sans text-[10px] whitespace-nowrap">記録なし</div>' : `
+                  <div class="py-0.5 px-1 rounded flex items-center justify-between whitespace-nowrap ${lastLap.type === 'STOP' ? 'bg-rose-50 border border-rose-100' : 'bg-slate-50 border border-slate-100'}">
+                    <span class="font-bold text-[9px] ${lastLap.type === 'STOP' ? 'text-rose-600' : 'text-slate-400'}">
+                      #${laps.length}${lastLap.type === 'STOP' ? ' (STOP)' : ''}
+                    </span>
+                    <div class="flex items-center gap-1 font-bold text-[10px]">
+                      <span class="text-amber-600">${lastLap.lapTime}</span>
+                      <span class="text-slate-300 font-normal">|</span>
+                      <span class="text-blue-600">${lastLap.splitTime}</span>
                     </div>
-                  `).join('')
-                }
+                  </div>
+                `}
               </div>
             </div>
 
