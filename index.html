@@ -39,8 +39,8 @@
       <!-- ステータス ＆ 部屋コード ＆ URL共有 -->
       <div class="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-2 mb-2 text-xs">
         <div class="flex items-center gap-1.5 flex-wrap">
-          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1 text-[11px]">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-amber-100 text-amber-800 flex items-center gap-1 text-[11px] border border-amber-300">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
             <span id="statusText">接続準備中...</span>
           </span>
           <div class="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px]">
@@ -98,11 +98,6 @@
             LINE送信
           </button>
 
-          <button onclick="shareGmailCSV()" class="min-h-[34px] bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
-            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L12 9.545l8.073-6.052c1.618-1.214 3.927-.059 3.927 1.964z"/></svg>
-            Gmail送信
-          </button>
-
           <button onclick="exportExcel()" class="min-h-[34px] bg-slate-900 hover:bg-black text-white font-bold px-2.5 py-1 rounded-lg shadow-sm flex items-center justify-center gap-1 transition active:scale-95">
             <svg class="w-3.5 h-3.5 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
             Excel出力
@@ -125,10 +120,21 @@
   <script>
     let state = { stopwatches: {} };
     let selectedIds = new Set();
-    let isHost = true;
+    let isHost = false;
     let peer = null;
     let hostConn = null;
     let clientConns = [];
+
+    // STUNサーバー設定（モバイル通信回線でのP2P接続確立用）
+    const peerConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
+    };
 
     let roomCode = location.hash.replace('#', '');
     if (!roomCode) {
@@ -136,51 +142,83 @@
       location.hash = roomCode;
     }
     document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v12-${roomCode}`;
+    const hostPeerId = `rowing-app-room-v15-${roomCode}`;
 
     function initP2P() {
       try {
-        peer = new Peer(hostPeerId);
-        
+        peer = new Peer(hostPeerId, peerConfig);
+
         peer.on('open', () => {
           isHost = true;
-          updateStatus('ホスト', 'bg-emerald-100 text-emerald-800 border-emerald-300');
+          updateStatus('ホスト (接続待ち)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
 
         peer.on('connection', (conn) => {
           clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
-          conn.on('data', (data) => handleAction(data));
+          conn.on('open', () => {
+            conn.send({ type: 'SYNC_STATE', state });
+            updateHostStatus();
+          });
+
+          conn.on('data', (data) => {
+            dispatchAction(data);
+          });
+
           conn.on('close', () => {
             clientConns = clientConns.filter(c => c !== conn);
+            updateHostStatus();
+          });
+
+          conn.on('error', () => {
+            clientConns = clientConns.filter(c => c !== conn);
+            updateHostStatus();
           });
         });
 
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
+            // 他の端末がすでにホストとして存在する場合、子機として接続
             isHost = false;
-            peer = new Peer();
-            peer.on('open', () => {
-              hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中', 'bg-blue-100 text-blue-800 border-blue-300');
-              
-              hostConn.on('data', (data) => {
-                if (data.type === 'SYNC_STATE') {
-                  state = data.state;
-                  renderStructure();
-                }
-              });
-              
-              hostConn.on('close', () => {
-                updateStatus('切断', 'bg-rose-100 text-rose-800 border-rose-300');
-              });
-            });
+            peer = new Peer(peerConfig);
+            peer.on('open', () => connectToHost());
           } else {
-            updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
+            updateStatus('通信エラー (再読み込みしてください)', 'bg-rose-100 text-rose-800 border-rose-300');
           }
         });
       } catch (e) {
         updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
+      }
+    }
+
+    function connectToHost() {
+      updateStatus('ホストへ接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
+      hostConn = peer.connect(hostPeerId, { reliable: true });
+
+      hostConn.on('open', () => {
+        updateStatus('同期中 (接続完了)', 'bg-blue-100 text-blue-800 border-blue-300');
+      });
+
+      hostConn.on('data', (data) => {
+        if (data.type === 'SYNC_STATE') {
+          state = data.state;
+          renderStructure();
+        }
+      });
+
+      hostConn.on('close', () => {
+        updateStatus('切断されました (再試行中)', 'bg-rose-100 text-rose-800 border-rose-300');
+        setTimeout(connectToHost, 3000);
+      });
+
+      hostConn.on('error', () => {
+        updateStatus('接続エラー', 'bg-rose-100 text-rose-800 border-rose-300');
+      });
+    }
+
+    function updateHostStatus() {
+      if (isHost) {
+        const count = clientConns.filter(c => c.open).length;
+        updateStatus(`ホスト (接続中: ${count}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
@@ -193,10 +231,17 @@
       }
     }
 
+    // アクションの送信・実行
     function dispatchAction(action) {
-      handleAction(action);
-      if (isHost) broadcastState();
-      else if (hostConn && hostConn.open) hostConn.send(action);
+      if (isHost) {
+        handleAction(action);
+        broadcastState();
+      } else if (hostConn && hostConn.open) {
+        hostConn.send(action);
+      } else {
+        // 親機・子機が確立する前の単独操作時
+        handleAction(action);
+      }
     }
 
     function handleAction(action) {
@@ -343,7 +388,6 @@
           break;
       }
 
-      if (isHost) broadcastState();
       renderStructure();
     }
 
@@ -436,13 +480,10 @@
       }
     }
 
-    // CSVデータ生成共通処理
-    function generateCSVText() {
+    // LINEへデータ送信
+    window.shareLineCSV = async () => {
       const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) {
-        alert("送信する計測データがありません");
-        return null;
-      }
+      if (keys.length === 0) return alert("送信する計測データがありません");
 
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -475,20 +516,12 @@
         csvRows.push(lapRow.join(','));
       });
 
-      return csvRows.join('\n');
-    }
-
-    // LINEへデータ送信（Web Share API + LINE URLスキーム修復版）
-    window.shareLineCSV = async () => {
-      const csvText = generateCSVText();
-      if (!csvText) return;
-
+      const csvText = csvRows.join('\n');
       const today = new Date().toISOString().slice(0, 10);
       const fileName = `Rowing_Result_${today}.csv`;
       const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8;' });
       const file = new File([blob], fileName, { type: 'text/csv' });
 
-      // 1. Web Share APIでファイル共有（スマホ環境でLINEを選べます）
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
@@ -502,48 +535,8 @@
         }
       }
 
-      // 2. LINEアプリのスキーム直接起動 fallback
       const textMessage = `【Rowing計測結果 (${today})】\n` + csvText;
-      const encodedMsg = encodeURIComponent(textMessage);
-
-      if (encodedMsg.length > 2000) {
-        alert("データ量が多いため、LINEテキスト送信制限を超えています。Excel出力機能をご利用ください。");
-        return;
-      }
-
-      // LINE URLスキームを起動
-      window.location.href = `https://line.me/R/msg/text/?${encodedMsg}`;
-    };
-
-    // Gmailアプリへデータ送信
-    window.shareGmailCSV = async () => {
-      const csvText = generateCSVText();
-      if (!csvText) return;
-
-      const today = new Date().toISOString().slice(0, 10);
-      const fileName = `Rowing_Result_${today}.csv`;
-      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvText], { type: 'text/csv;charset=utf-8;' });
-      const file = new File([blob], fileName, { type: 'text/csv' });
-
-      // 1. Web Share API（スマホの共有メニューからGmailアプリを選択）
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: `Rowing計測結果_${today}`,
-            text: 'Rowingストップウォッチ計測データです。'
-          });
-          return;
-        } catch (err) {
-          if (err.name === 'AbortError') return;
-        }
-      }
-
-      // 2. mailto: スキームでメーラー/Gmailアプリ起動
-      const subject = encodeURIComponent(`Rowing計測結果 (${today})`);
-      const body = encodeURIComponent(`Rowingストップウォッチの計測結果データです:\n\n${csvText}`);
-      
-      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      window.location.href = `https://line.me/R/msg/text/?${encodeURIComponent(textMessage)}`;
     };
 
     // Excel書き出し
