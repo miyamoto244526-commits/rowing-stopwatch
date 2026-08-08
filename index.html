@@ -2,68 +2,131 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Rowing マルチストップウォッチ</title>
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PeerJS for P2P Realtime Sync -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- SheetJS for Excel Export -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <style>
+    /* スマホの誤操作・ダブルタップズーム防止およびタッチレスポンス向上 */
+    button, input, label, select {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* カスタムスクロールバー */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
 </head>
-<body class="bg-slate-100 min-h-screen p-3 md:p-6">
-  <div class="max-w-6xl mx-auto">
-    
-    <!-- ヘッダー・一括操作バー -->
-    <div class="bg-white p-4 rounded-xl shadow-md mb-6 sticky top-2 z-20 border border-gray-200">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b pb-3 mb-3">
-        <div class="flex items-center space-x-2">
-          <span id="statusBadge" class="px-3 py-1 text-xs font-bold rounded-full bg-green-100 text-green-800">スタンドアロン / ホスト</span>
-          <span class="text-xs text-gray-500 font-bold">部屋コード: <span id="roomCodeDisplay" class="text-blue-600 font-mono text-sm"></span></span>
+<body class="bg-slate-100 min-h-screen pb-12 text-slate-800 antialiased selection:bg-blue-200">
+
+  <!-- メインコンテナ -->
+  <div class="max-w-6xl mx-auto px-2 sm:px-4 pt-3">
+
+    <!-- Sticky 操作コントロールバー -->
+    <header class="bg-white/95 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-lg border border-slate-200/80 mb-4 sticky top-2 z-30 transition-all">
+      
+      <!-- ステータス ＆ 部屋コード ＆ LINE共有リンク -->
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5 mb-3 text-xs sm:text-sm">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span id="statusBadge" class="px-2.5 py-1 font-bold rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1.5 shadow-sm">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span id="statusText">接続準備中...</span>
+          </span>
+          <div class="flex items-center gap-1 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+            <span class="text-slate-500 font-medium">部屋:</span>
+            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600 text-sm"></span>
+          </div>
         </div>
-        <div class="text-xs text-gray-400">
-          ※同じURL（部屋コード付き）を開いた端末同士でリアルタイム同期
-        </div>
+
+        <!-- 共有用URLコピーボタン -->
+        <button onclick="copyShareUrl()" class="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold px-3 py-1.5 rounded-lg text-xs transition active:scale-95 shadow-sm">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
+          LINE共有URLをコピー
+        </button>
       </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center space-x-3">
-          <label class="flex items-center space-x-2 cursor-pointer font-bold text-gray-700">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded">
-            <span>全選択</span>
+      <!-- 操作ボタン群（スマホ対応グリッドレイアウト） -->
+      <div class="space-y-2.5">
+        
+        <!-- 一括選択 & カウント表示 -->
+        <div class="flex items-center justify-between">
+          <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-700 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 transition">
+            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+            <span class="text-xs sm:text-sm">全選択</span>
           </label>
-          <span class="text-sm bg-gray-100 px-3 py-1 rounded-full text-gray-600 font-bold">
-            艇数: <span id="count" class="text-blue-600">0</span> / 100
-          </span>
+          <div class="text-xs sm:text-sm font-bold bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200">
+            登録艇数: <span id="count" class="text-base text-blue-800 font-black">0</span> / 100
+          </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <button onclick="batchStart()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ▶ 選択艇を同時スタート
+        <!-- 一括アクションボタン群 -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-wrap items-center gap-1.5 sm:gap-2">
+          
+          <button onclick="batchStart()" class="col-span-2 sm:col-span-1 min-h-[44px] bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
+            選択艇 一斉スタート
           </button>
-          <button onclick="stopAllTimers()" class="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ■ 全体STOP
+
+          <button onclick="addTimer()" class="min-h-[44px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            艇を追加
           </button>
-          <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            + 艇を追加
+
+          <button onclick="removeTimer()" class="min-h-[44px] bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+            艇削除
           </button>
-          <button onclick="removeTimer()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            - 艇削除
+
+          <button onclick="stopAllTimers()" class="min-h-[44px] bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
+            全体STOP
           </button>
-          <button onclick="resetAllTimers()" class="bg-rose-700 hover:bg-rose-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
-            ↺ 全体リセット
+
+          <button onclick="resetAllTimers()" class="min-h-[44px] bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1 transition active:scale-95">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            全体リセット
           </button>
-          <button onclick="exportExcel()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-2 rounded-lg shadow text-sm">
+
+          <button onclick="exportExcel()" class="col-span-2 sm:col-span-1 min-h-[44px] bg-slate-800 hover:bg-slate-900 active:bg-black text-white font-bold px-3 py-2 rounded-xl shadow-sm text-xs sm:text-sm flex items-center justify-center gap-1.5 transition active:scale-95 md:ml-auto">
+            <svg class="w-4 h-4 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
             Excel出力
           </button>
+
         </div>
       </div>
+    </header>
+
+    <!-- コピー完了通知トースト -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs sm:text-sm font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-2 border border-slate-700">
+      <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+      <span id="toastMsg">URLをコピーしました！</span>
     </div>
 
-    <!-- ストップウォッチカード一覧 -->
-    <div id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <!-- ストップウォッチカード グリッド（スマホ: 1列, タブレット: 2列, PC: 3列） -->
+    <main id="app" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"></main>
 
   </div>
 
+  <!-- JavaScript アプリケーションロジック -->
   <script>
-    // --- データ構造 ---
+    // --- アプリケーション状態 ---
     let state = { stopwatches: {} };
     let selectedIds = new Set();
     let isHost = true;
@@ -71,55 +134,73 @@
     let hostConn = null;
     let clientConns = [];
 
-    // 部屋コード制御
+    // 部屋コード制御 (URL Hashから取得、なければ自動作成)
     let roomCode = location.hash.replace('#', '');
     if (!roomCode) {
       roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
       location.hash = roomCode;
     }
     document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v7-${roomCode}`;
+    const hostPeerId = `rowing-app-room-v10-${roomCode}`;
 
     // --- P2P リアルタイム同期設定 ---
     function initP2P() {
       try {
         peer = new Peer(hostPeerId);
+        
         peer.on('open', () => {
           isHost = true;
-          updateStatus('ホスト (共有元)', 'bg-green-100 text-green-800');
+          updateStatus('ホスト (共有元)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
+
         peer.on('connection', (conn) => {
           clientConns.push(conn);
-          conn.on('open', () => conn.send({ type: 'SYNC_STATE', state }));
+          conn.on('open', () => {
+            conn.send({ type: 'SYNC_STATE', state });
+          });
           conn.on('data', (data) => handleAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); });
+          conn.on('close', () => {
+            clientConns = clientConns.filter(c => c !== conn);
+          });
         });
+
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
+            // ホストが既に存在する場合はゲスト（参加者）として接続
             isHost = false;
             peer = new Peer();
             peer.on('open', () => {
               hostConn = peer.connect(hostPeerId);
-              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800');
+              updateStatus('参加中 (同期OK)', 'bg-blue-100 text-blue-800 border-blue-300');
+              
               hostConn.on('data', (data) => {
                 if (data.type === 'SYNC_STATE') {
                   state = data.state;
                   renderStructure();
                 }
               });
+              
+              hostConn.on('close', () => {
+                updateStatus('切断されました', 'bg-rose-100 text-rose-800 border-rose-300');
+              });
             });
+          } else {
+            console.warn("PeerJS error:", err);
+            updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
           }
         });
       } catch (e) {
         console.warn("P2P Init Error:", e);
+        updateStatus('スタンドアロン', 'bg-amber-100 text-amber-800 border-amber-300');
       }
     }
 
     function updateStatus(text, colorClass) {
       const badge = document.getElementById('statusBadge');
-      if (badge) {
-        badge.innerText = text;
-        badge.className = `px-3 py-1 text-xs font-bold rounded-full ${colorClass}`;
+      const statusText = document.getElementById('statusText');
+      if (badge && statusText) {
+        statusText.innerText = text;
+        badge.className = `px-2.5 py-1 font-bold rounded-full flex items-center gap-1.5 shadow-sm border ${colorClass}`;
       }
     }
 
@@ -142,8 +223,12 @@
           if (keys.length >= 100) return alert("最大100個まで追加可能です");
           const id = 'sw_' + now + '_' + Math.floor(Math.random() * 1000);
           state.stopwatches[id] = {
-            id, name: `艇 ${keys.length + 1}`,
-            isRunning: false, startTime: 0, accumulatedTime: 0, laps: []
+            id,
+            name: `艇 ${keys.length + 1}`,
+            isRunning: false,
+            startTime: 0,
+            accumulatedTime: 0,
+            laps: []
           };
           break;
 
@@ -257,7 +342,7 @@
       });
     }
 
-    // --- 操作関数の定義 ---
+    // --- UI操作関数 ---
     window.addTimer = () => dispatchAction({ type: 'ADD' });
     window.deleteTimer = (id) => dispatchAction({ type: 'DELETE', id });
     window.removeTimer = () => {
@@ -275,7 +360,7 @@
     window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
     window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
     window.resetAllTimers = () => {
-      if (confirm("すべてのストップウォッチをリセットしますか？\n（すべての記録が消去されます）")) {
+      if (confirm("すべてのストップウォッチをリセットしますか？\n（計測記録がすべて削除されます）")) {
         dispatchAction({ type: 'RESET_ALL' });
       }
     };
@@ -283,11 +368,11 @@
     window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
     window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
     window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象の艇を選択してください");
+      if (selectedIds.size === 0) return alert("対象の艇にチェックを入れて選択してください");
       dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
     };
 
-    // --- タイムフォーマット (mm:ss.00) ---
+    // --- mm:ss.00 フォーマット表示 ---
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -318,21 +403,45 @@
       renderStructure();
     };
 
-    // --- Excel出力 (ファイル名入力機能付き) ---
+    // LINE共有用URLコピー機能
+    window.copyShareUrl = () => {
+      const baseUrl = location.origin + location.pathname;
+      const shareUrl = `${baseUrl}?openExternalBrowser=1#${roomCode}`;
+      
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        showToast("LINE共有URLをコピーしました！");
+      }).catch(() => {
+        prompt("以下のURLをコピーしてLINEに送信してください:", shareUrl);
+      });
+    };
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      if (toast && toastMsg) {
+        toastMsg.innerText = msg;
+        toast.classList.remove('translate-y-20', 'opacity-0');
+        setTimeout(() => {
+          toast.classList.add('translate-y-20', 'opacity-0');
+        }, 2500);
+      }
+    }
+
+    // --- Excel出力（ファイル名指定 Prompt ＆ 横持ちフォーマット） ---
     window.exportExcel = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("出力するデータがありません");
+
       const today = new Date().toISOString().slice(0, 10);
       const defaultFileName = `Rowing_Result_${today}`;
       
-      const userInput = prompt("保存するファイル名を入力してください（.xlsx は自動で付きます）:", defaultFileName);
-      
-      // キャンセルボタンが押された場合は処理中断
+      const userInput = prompt("保存するExcelファイル名を入力してください（.xlsx は自動付与）:", defaultFileName);
       if (userInput === null) return;
       
       const fileName = userInput.trim() || defaultFileName;
       const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
 
       const aoa = [];
-      
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
         const lCount = (sw.laps || []).length;
@@ -347,7 +456,6 @@
 
       Object.values(state.stopwatches).forEach(sw => {
         const laps = sw.laps || [];
-        
         const lapRow = [sw.name, 'LAP'];
         const splitRow = [sw.name, 'SPLIT'];
 
@@ -371,7 +479,7 @@
       XLSX.writeFile(wb, finalFileName);
     };
 
-    // --- UI構造描画 ---
+    // --- UI構造描画 (スマホ最適化カードレイアウト) ---
     function renderStructure() {
       const container = document.getElementById("app");
       const keys = Object.keys(state.stopwatches);
@@ -381,60 +489,88 @@
       const selectAllEl = document.getElementById("selectAllCheckbox");
       if (selectAllEl) selectAllEl.checked = allSelected;
 
+      if (keys.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full bg-white p-8 rounded-2xl shadow-sm text-center border border-slate-200 py-12">
+            <div class="w-16 h-16 mx-auto bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-3">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+            <p class="text-slate-600 font-bold mb-1">ストップウォッチがありません</p>
+            <p class="text-xs text-slate-400 mb-4">「+ 艇を追加」ボタンを押して計測を開始してください</p>
+            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl shadow text-sm inline-flex items-center gap-1.5 transition">
+              + 最初の艇を追加
+            </button>
+          </div>
+        `;
+        return;
+      }
+
       container.innerHTML = keys.map(id => {
         const sw = state.stopwatches[id];
         const laps = sw.laps || [];
         const isSelected = selectedIds.has(id);
 
         return `
-          <div class="bg-white p-4 rounded-xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center space-x-2 w-full mr-2">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded cursor-pointer">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-gray-800 text-lg border-b focus:border-blue-500 focus:outline-none w-full">
+          <div class="bg-white p-3.5 sm:p-4 rounded-2xl shadow-md border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200/80 bg-blue-50/20' : 'border-slate-200/90'} transition-all">
+            
+            <!-- ヘッダー: 選択チェックボックス + 艇名入力 + 個別削除 -->
+            <div class="flex items-center justify-between gap-2 mb-2.5">
+              <div class="flex items-center gap-2 flex-1 min-w-0">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-5 h-5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
+                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名を入力" class="font-bold text-slate-800 text-base sm:text-lg border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-1 py-0.5 rounded transition">
               </div>
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-gray-400 hover:text-red-500 font-bold p-1">✕</button>
+              <button onclick="deleteTimer('${id}')" title="この艇を削除" class="text-slate-300 hover:text-red-500 active:text-red-600 p-1 rounded-lg transition flex-shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+              </button>
             </div>
 
-            <!-- mm:ss.00 表示 -->
-            <div id="display-${id}" class="text-4xl font-mono font-bold text-center my-4 text-slate-800 tracking-wider">
-              ${formatTime(getElapsedTime(sw))}
+            <!-- mm:ss.00 メインタイマー表示 (スマホでも圧倒的視認性) -->
+            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-3xl sm:text-4xl text-center py-3 px-2 rounded-xl my-2.5 shadow-inner tracking-wider border border-slate-800">
+              <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
             </div>
 
-            <!-- ボタンエリア（START/STOP, LAP, RESET） -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
-              <button onclick="toggleStart('${id}')" class="py-3 rounded-lg font-bold text-white shadow active:scale-95 transition-all ${sw.isRunning ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'}">
+            <!-- 操作ボタン（START/STOP, LAP, RESET — スマホ親指で押しやすい高機能サイズ） -->
+            <div class="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">
+              <button onclick="toggleStart('${id}')" class="min-h-[48px] rounded-xl font-bold text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center ${sw.isRunning ? 'bg-red-500 hover:bg-red-600 active:bg-red-700' : 'bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700'}">
                 ${sw.isRunning ? 'STOP' : 'START'}
               </button>
-              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-3 rounded-lg font-bold bg-amber-500 hover:bg-amber-600 text-white shadow active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed">
+              
+              <button onclick="addLap('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[48px] rounded-xl font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center disabled:opacity-35 disabled:cursor-not-allowed">
                 LAP
               </button>
-              <button onclick="resetTimer('${id}')" class="py-3 rounded-lg font-bold bg-gray-500 hover:bg-gray-600 text-white shadow active:scale-95">
+
+              <button onclick="resetTimer('${id}')" class="min-h-[48px] rounded-xl font-bold bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white shadow active:scale-95 transition-all text-sm sm:text-base flex items-center justify-center">
                 RESET
               </button>
             </div>
 
-            <!-- LAP / SPLIT 履歴 -->
-            <div class="border-t pt-2 max-h-36 overflow-y-auto text-xs font-mono">
-              <div class="flex justify-between text-gray-400 mb-1 px-1 font-sans">
-                <span>LAP</span><span>LAPタイム</span><span>SPLITタイム</span>
+            <!-- LAP / SPLIT 履歴リスト -->
+            <div class="border-t border-slate-100 pt-2 text-xs font-mono">
+              <div class="flex justify-between text-slate-400 mb-1 px-1 font-sans text-[11px] font-bold">
+                <span class="w-10">LAP</span>
+                <span class="w-1/2 text-right">LAPタイム</span>
+                <span class="w-1/2 text-right">SPLITタイム</span>
               </div>
-              ${laps.length === 0 ? '<div class="text-center text-gray-400 py-2 font-sans">記録なし</div>' : 
-                laps.slice().reverse().map((lap, i) => `
-                  <div class="flex justify-between py-1 border-b border-gray-100 px-1">
-                    <span class="font-bold text-gray-500">#${laps.length - i}</span>
-                    <span class="text-amber-600 font-semibold">${lap.lapTime}</span>
-                    <span class="text-blue-600 font-semibold">${lap.splitTime}</span>
-                  </div>
-                `).join('')
-              }
+              
+              <div class="max-h-32 overflow-y-auto space-y-1 pr-0.5">
+                ${laps.length === 0 ? '<div class="text-center text-slate-300 py-3 font-sans text-xs">ラップ記録なし</div>' : 
+                  laps.slice().reverse().map((lap, i) => `
+                    <div class="flex justify-between items-center py-1 px-1.5 rounded bg-slate-50 border border-slate-100">
+                      <span class="font-bold text-slate-400 w-10 text-[11px]">#${laps.length - i}</span>
+                      <span class="text-amber-600 font-bold w-1/2 text-right">${lap.lapTime}</span>
+                      <span class="text-blue-600 font-bold w-1/2 text-right">${lap.splitTime}</span>
+                    </div>
+                  `).join('')
+                }
+              </div>
             </div>
+
           </div>
         `;
       }).join('');
     }
 
-    // 数値の描画更新
+    // 画面再描画を行わずに数字のみを毎フレーム(60fps)更新
     function updateTimerNumbers() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
@@ -448,6 +584,7 @@
       requestAnimationFrame(updateTimerNumbers);
     }
 
+    // 初期化実行
     initP2P();
     renderStructure();
     requestAnimationFrame(updateTimerNumbers);
