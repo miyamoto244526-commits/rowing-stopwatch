@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ ver2 (スマホ対応版)</title>
+  <title>Rowing マルチストップウォッチ ver2 (スマホ完全対応版)</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PeerJS for P2P Realtime Sync -->
@@ -31,34 +31,34 @@
     <!-- ヘッダー・操作コントロールバー -->
     <header class="bg-white/95 backdrop-blur-md p-2 rounded-xl shadow-md border border-slate-200/80 mb-3 sticky top-1 z-30">
       
-      <!-- 上段：ステータス・共有ID・全選択・選択START・選択STOP・艇数・補助操作 -->
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-1.5 mb-1.5 text-xs">
+      <!-- 上段：ステータス・共有ID・全選択・選択START・選択STOP・艇数 -->
+      <div class="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-1.5 mb-1.5 text-xs">
         <div class="flex items-center gap-1.5 flex-wrap">
           <!-- 接続ステータス -->
-          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-amber-100 text-amber-800 flex items-center gap-1 text-[10px] border border-amber-300">
-            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-            <span id="statusText">接続準備中...</span>
+          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-slate-100 text-slate-700 flex items-center gap-1 text-[10px] border border-slate-300">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+            <span id="statusText">単体動作モード</span>
           </span>
 
           <!-- 共有ID -->
           <div class="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[10px]">
             <span class="text-slate-500 font-medium">共有ID:</span>
-            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600"></span>
+            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600">----</span>
           </div>
 
           <!-- 全選択 -->
           <label class="flex items-center gap-1 cursor-pointer font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-200 transition text-[10px]">
-            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+            <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300">
             <span>全選択</span>
           </label>
 
           <!-- 選択START -->
-          <button onclick="batchStartWithSound()" class="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
+          <button onclick="batchStartWithSound()" class="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2 py-0.5 rounded shadow-sm transition active:scale-95 text-[10px]">
             選択START
           </button>
 
           <!-- 選択STOP -->
-          <button onclick="batchStopWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
+          <button onclick="batchStopWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-0.5 rounded shadow-sm transition active:scale-95 text-[10px]">
             選択STOP
           </button>
 
@@ -69,10 +69,10 @@
         </div>
 
         <div class="flex items-center gap-1">
-          <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition active:scale-95">
+          <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px]">
             URLコピー
           </button>
-          <button onclick="resetAllTimersWithSound()" class="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition active:scale-95">
+          <button onclick="resetAllTimersWithSound()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px]">
             全体リセット
           </button>
         </div>
@@ -98,7 +98,7 @@
         <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           CSV出力
         </button>
-        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049b42] text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
+        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           LINE転送
         </button>
       </div>
@@ -131,7 +131,7 @@
       </div>
     </div>
 
-    <!-- ストップウォッチカード一覧（スマホ1〜2列、タブレット/PCで多列化） -->
+    <!-- ストップウォッチカード一覧（スマホ1〜2列） -->
     <main id="app" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2.5"></main>
 
   </div>
@@ -147,18 +147,18 @@
     let lastSyncServerTime = Date.now();
     let lastSyncLocalTime = Date.now();
 
-    // 画面スリープ防止 (Wake Lock)
+    // 画面スリープ防止機能 (Wake Lock)
     async function requestWakeLock() {
       try {
         if ('wakeLock' in navigator) {
           await navigator.wakeLock.request('screen');
         }
       } catch (err) {
-        console.log('Wake Lock request failed:', err);
+        console.log('Wake Lock Error:', err);
       }
     }
 
-    // 効果音生成
+    // Web Audio API による効果音生成
     let audioCtx = null;
     function initAudio() {
       if (!audioCtx) {
@@ -183,7 +183,7 @@
         osc.start();
         osc.stop(audioCtx.currentTime + duration);
       } catch (e) {
-        console.warn('Audio error:', e);
+        console.warn('Audio play failed:', e);
       }
     }
 
@@ -204,7 +204,7 @@
     }
     function resetAllTimersWithSound() { playBeep(349.23, 'triangle', 0.15); resetAllTimers(); }
 
-    // ルームID設定
+    // ルームID初期化
     let roomCode = location.hash.replace('#', '');
     if (!roomCode) {
       roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
@@ -218,21 +218,22 @@
       return lastSyncServerTime + (Date.now() - lastSyncLocalTime);
     }
 
-    // P2P初期化（スマホでの接続失敗時も単体動作するようにガード）
+    // P2P通信初期化（通信不可のスマホ環境でも絶対にエラーで落ちない仕様）
     function initP2P() {
       if (typeof Peer === 'undefined') {
         updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
         return;
       }
 
+      // WebRTCはHTTPSまたはlocalhost環境でのみ動作（iOS Safari等の制約対応）
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        updateStatus('単体動作 (HTTP環境)', 'bg-amber-100 text-amber-800 border-amber-300');
+        return;
+      }
+
       try {
         peer = new Peer(hostPeerId, {
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
-          }
+          config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
         });
         
         peer.on('open', () => {
@@ -254,8 +255,12 @@
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
-            peer = new Peer({ config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
-            peer.on('open', () => connectToHost());
+            try {
+              peer = new Peer();
+              peer.on('open', () => connectToHost());
+            } catch (e) {
+              updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
+            }
           } else {
             updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
           }
@@ -268,27 +273,31 @@
     function connectToHost() {
       if (!peer) return;
       updateStatus('接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
-      hostConn = peer.connect(hostPeerId, { reliable: true });
+      try {
+        hostConn = peer.connect(hostPeerId, { reliable: true });
 
-      hostConn.on('open', () => {
-        updateStatus('同期中 (子機)', 'bg-blue-100 text-blue-800 border-blue-300');
-        hostConn.send({ type: 'REQUEST_SYNC' });
-      });
+        hostConn.on('open', () => {
+          updateStatus('同期中 (子機)', 'bg-blue-100 text-blue-800 border-blue-300');
+          hostConn.send({ type: 'REQUEST_SYNC' });
+        });
 
-      hostConn.on('data', (data) => {
-        if (data.type === 'SYNC_STATE') {
-          if (data.serverTime) {
-            lastSyncServerTime = data.serverTime;
-            lastSyncLocalTime = Date.now();
+        hostConn.on('data', (data) => {
+          if (data.type === 'SYNC_STATE') {
+            if (data.serverTime) {
+              lastSyncServerTime = data.serverTime;
+              lastSyncLocalTime = Date.now();
+            }
+            state = data.state;
+            renderStructure();
           }
-          state = data.state;
-          renderStructure();
-        }
-      });
+        });
 
-      hostConn.on('error', () => {
+        hostConn.on('error', () => {
+          updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
+        });
+      } catch (e) {
         updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
-      });
+      }
     }
 
     function updateHostStatus() {
@@ -609,7 +618,7 @@
     }
 
     window.exportExcel = () => {
-      if (typeof XLSX === 'undefined') return alert("Excel出力ライブラリの読み込みに失敗しました");
+      if (typeof XLSX === 'undefined') return alert("Excel出力機能の準備中です");
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
@@ -620,7 +629,7 @@
     };
 
     window.exportCsv = () => {
-      if (typeof XLSX === 'undefined') return alert("CSV出力ライブラリの読み込みに失敗しました");
+      if (typeof XLSX === 'undefined') return alert("CSV出力機能の準備中です");
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
@@ -705,7 +714,7 @@
         }).join('');
 
         return `
-          <!-- カード縦幅固定：h-48 -->
+          <!-- カード高さ固定(h-48) -->
           <div class="bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'} p-2 flex flex-col justify-between h-48 transition-all">
             <div class="flex items-center justify-between gap-1 mb-1 pb-1 border-b border-slate-100">
               <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-4 h-4 text-blue-600 rounded border-slate-300">
@@ -731,7 +740,7 @@
               </button>
             </div>
 
-            <!-- タイム表示エリア（高さ固定：22pxで1行のみ可視） -->
+            <!-- タイム表示（高さ22px固定・1行スクロール） -->
             <div id="lapContainer-${id}" class="h-[22px] overflow-y-auto no-scrollbar bg-slate-50/80 rounded px-1 border border-slate-100 mt-1">
               ${lapsHtml || '<div class="text-[10px] text-slate-400 text-center py-0.5 leading-none">記録なし</div>'}
             </div>
@@ -752,8 +761,11 @@
       requestAnimationFrame(updateDisplays);
     }
 
+    // イベント登録（安全な順番で呼び出し）
     window.addEventListener('DOMContentLoaded', () => {
       requestWakeLock();
+
+      // 初期データ生成
       if (Object.keys(state.stopwatches).length === 0) {
         const now = Date.now();
         for (let i = 1; i <= 3; i++) {
@@ -768,9 +780,15 @@
           };
         }
       }
+
+      // まず画面UIを描画（絶対に画面を真っ白にさせない）
       renderStructure();
-      initP2P();
       requestAnimationFrame(updateDisplays);
+
+      // 画面描画完了後に通信機能を安全に初期化
+      setTimeout(() => {
+        initP2P();
+      }, 300);
     });
   </script>
 </body>
