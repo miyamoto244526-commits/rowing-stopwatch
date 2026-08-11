@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ</title>
+  <title>Rowing マルチストップウォッチ ver2</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PeerJS for P2P Realtime Sync -->
@@ -155,7 +155,7 @@
         <!-- モーダルフッター -->
         <div class="p-2.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
           <button onclick="copyTableToClipboard()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition active:scale-95">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 012-2h2a2 2 0 012-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
             クリップボードにコピー
           </button>
 
@@ -274,7 +274,6 @@
         });
 
         peer.on('connection', (conn) => {
-          // 重複接続の防止：既存の同PeerID接続または切断済み接続を除去
           clientConns = clientConns.filter(c => c && c.open && c.peer !== conn.peer);
           clientConns.push(conn);
 
@@ -343,11 +342,9 @@
       });
     }
 
-    // 定期ハートビートと古い接続の自動クリーンアップ
     setInterval(() => {
       if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
       if (isHost) {
-        // 切断された接続をフィルタリングで除去
         clientConns = clientConns.filter(c => c && c.open);
         clientConns.forEach(conn => {
           try {
@@ -374,7 +371,6 @@
 
     function updateHostStatus() {
       if (isHost) {
-        // openかつユニークなPeerIDのみをカウント
         const activePeers = new Set(clientConns.filter(c => c && c.open).map(c => c.peer));
         updateStatus(`ホスト (接続端末: ${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
@@ -613,15 +609,7 @@
       dispatchAction({ type: 'BATCH_STOP', ids: Array.from(selectedIds) });
     };
 
-    window.scrollLap = (id, direction) => {
-      const container = document.getElementById(`lapContainer-${id}`);
-      if (container) {
-        const lineHeight = 24;
-        container.scrollBy({ top: direction * lineHeight, behavior: 'smooth' });
-      }
-    };
-
-    // mm:ss.00 形式フォーマット (1/100秒まで表示)
+    // mm:ss.00 形式フォーマット (1/100秒表示)
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -662,13 +650,33 @@
       renderStructure();
     };
 
+    window.showToast = (msg) => {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMsg');
+      if (toast && toastMsg) {
+        toastMsg.innerText = msg;
+        toast.classList.remove('translate-y-20', 'opacity-0');
+        toast.classList.add('translate-y-0', 'opacity-100');
+        setTimeout(() => {
+          toast.classList.remove('translate-y-0', 'opacity-100');
+          toast.classList.add('translate-y-20', 'opacity-0');
+        }, 2500);
+      }
+    };
+
+    window.copyShareUrl = () => {
+      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        showToast('共有URLをコピーしました！');
+      });
+    };
+
     window.shareLine = () => {
       const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
       const msg = `【Rowingマルチストップウォッチ】\nリアルタイム計測ルーム(ID: ${roomCode})に参加してください：\n${shareUrl}`;
       window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
     };
 
-    // 出力データ生成 (SPLIT行のみを出力)
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -700,13 +708,12 @@
       return aoa;
     }
 
-    // Excel/CSV用のワークシート作成 (mm:ss.00表示の保持と列幅最適化)
     function createOptimizedWorksheet(aoa, isCsv = false) {
       const processedAoa = aoa.map((row, rIdx) => {
         if (rIdx === 0) return row;
         return row.map((cell, cIdx) => {
           if (cIdx >= 2 && typeof cell === 'string' && cell.match(/^\d{2}:\d{2}\.\d{2}$/)) {
-            return isCsv ? `="${cell}"` : cell; // CSV保存時にExcelで開いた際「.00」が消えないよう式化
+            return isCsv ? `="${cell}"` : cell;
           }
           return cell;
         });
@@ -737,6 +744,29 @@
       }
       return ws;
     }
+
+    window.exportExcel = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("出力するデータがありません");
+      const aoa = generateExportData();
+      const ws = createOptimizedWorksheet(aoa, false);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Result");
+      XLSX.writeFile(wb, getDefaultFileName('xlsx'));
+    };
+
+    window.exportCsv = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("出力するデータがありません");
+      const aoa = generateExportData();
+      const ws = createOptimizedWorksheet(aoa, true);
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = getDefaultFileName('csv');
+      link.click();
+    };
 
     window.openPreviewModal = () => {
       const keys = Object.keys(state.stopwatches);
@@ -771,193 +801,113 @@
     };
 
     window.copyTableToClipboard = () => {
-      const aoa = generateExportData();
-      const tsvText = aoa.map(row => row.join('\t')).join('\n');
-
-      navigator.clipboard.writeText(tsvText).then(() => {
-        showToast("クリップボードにコピーしました！");
-      }).catch(err => {
-        console.error("Copy failed:", err);
-        alert("コピーに失敗しました");
+      const table = document.querySelector('#previewTableContainer table');
+      if (!table) return;
+      let tsv = [];
+      for (let row of table.rows) {
+        let cells = Array.from(row.cells).map(c => c.innerText);
+        tsv.push(cells.join('\t'));
+      }
+      navigator.clipboard.writeText(tsv.join('\n')).then(() => {
+        showToast('クリップボードにコピーしました！');
       });
     };
 
-    window.exportCsv = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
-      const defaultName = getDefaultFileName('csv');
-      const userInput = prompt("保存するCSVファイル名を入力してください:", defaultName);
-      if (userInput === null) return;
-      const fileName = userInput.trim() || defaultName;
-      const finalFileName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`;
-
-      try {
-        const aoa = generateExportData();
-        const ws = createOptimizedWorksheet(aoa, true);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-        XLSX.writeFile(wb, finalFileName, { bookType: 'csv' });
-      } catch (err) {
-        console.error("CSV Export error:", err);
-        alert("CSVの保存に失敗しました。");
-      }
-    };
-
-    window.exportExcel = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
-      const defaultName = getDefaultFileName('xlsx');
-      const userInput = prompt("保存するExcelファイル名を入力してください:", defaultName);
-      if (userInput === null) return;
-      const fileName = userInput.trim() || defaultName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      try {
-        const aoa = generateExportData();
-        const ws = createOptimizedWorksheet(aoa, false);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-        XLSX.writeFile(wb, finalFileName);
-      } catch (err) {
-        console.error("Excel Export error:", err);
-        alert("Excelの保存に失敗しました。");
-      }
-    };
-
-    window.copyShareUrl = () => {
-      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      navigator.clipboard.writeText(shareUrl).then(() => showToast("共有URLをコピーしました！")).catch(() => prompt("以下のURLをコピーしてください:", shareUrl));
-    };
-
-    function showToast(msg) {
-      const toast = document.getElementById('toast');
-      const toastMsg = document.getElementById('toastMsg');
-      if (toast && toastMsg) {
-        toastMsg.innerText = msg;
-        toast.classList.remove('translate-y-20', 'opacity-0');
-        setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 2500);
-      }
-    }
-
     function renderStructure() {
-      const container = document.getElementById("app");
+      const app = document.getElementById('app');
+      if (!app) return;
       const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
+      document.getElementById('count').innerText = keys.length;
 
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
-
-      if (keys.length === 0) {
-        container.innerHTML = `
-          <div class="col-span-full bg-white p-6 rounded-xl shadow-sm text-center border border-slate-200 py-10">
-            <p class="text-slate-700 font-bold text-sm mb-1">ストップウォッチがありません</p>
-            <p class="text-xs text-slate-400 mb-3">「追加」を押して作成してください（最大100個）</p>
-            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-lg shadow text-xs">
-              追加
-            </button>
-          </div>
-        `;
-        return;
+      const selectAllCb = document.getElementById('selectAllCheckbox');
+      if (selectAllCb) {
+        selectAllCb.checked = keys.length > 0 && keys.every(k => selectedIds.has(k));
       }
 
-      container.innerHTML = keys.map(id => {
+      app.innerHTML = keys.map(id => {
         const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
         const isSelected = selectedIds.has(id);
+        const laps = sw.laps || [];
+
+        const lapsHtml = laps.slice().reverse().map((lap, idx) => {
+          const lapNo = laps.length - idx;
+          return `
+            <div class="flex justify-between items-center text-[10px] py-0.5 border-b border-slate-100 font-mono leading-none h-[20px]">
+              <span class="text-slate-400 font-bold">P${lapNo}</span>
+              <span class="text-slate-600">LAP: ${lap.lapTime}</span>
+              <span class="text-slate-800 font-bold">SPLIT: ${lap.splitTime}</span>
+            </div>
+          `;
+        }).join('');
 
         return `
-          <div class="bg-white p-2 rounded-xl shadow-sm border transition-all ${
-            sw.isRunning 
-              ? 'border-emerald-500 ring-2 ring-emerald-100' 
-              : isSelected 
-                ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/10' 
-                : 'border-slate-200'
-          }">
-            
-            <div class="flex items-center justify-between gap-1 mb-1">
-              <div class="flex items-center gap-1 flex-1 min-w-0">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名" class="font-bold text-slate-800 text-xs border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-0.5 py-0.5 truncate">
-              </div>
-
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-slate-300 hover:text-rose-500 p-0.5 rounded transition flex-shrink-0">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          <!-- h-48 でストップウォッチカード全体の縦幅を固定 -->
+          <div class="bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'} p-2 flex flex-col justify-between h-48 transition-all">
+            <div class="flex items-center justify-between gap-1 mb-1 pb-1 border-b border-slate-100">
+              <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300">
+              <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-xs text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full px-1 py-0.5">
+              <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5 transition" title="削除">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
               </button>
             </div>
 
-            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-base sm:text-xl md:text-2xl text-center py-1 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tighter whitespace-nowrap overflow-hidden">
-              <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
+            <div class="text-center my-0.5">
+              <div id="display-${id}" class="font-mono font-black text-2xl tracking-wider ${sw.isRunning ? 'text-blue-600' : 'text-slate-700'}">
+                ${formatTime(getElapsedTime(sw))}
+              </div>
             </div>
 
-            <div class="grid grid-cols-3 gap-1 my-1.5">
-              <button onclick="toggleStartWithSound('${id}')" class="min-h-[30px] rounded font-bold text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center ${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'}">
+            <div class="grid grid-cols-3 gap-1 my-1">
+              <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm">
                 ${sw.isRunning ? 'STOP' : 'START'}
               </button>
-              
-              <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[30px] rounded font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed">
+              <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm"'}>
                 LAP
               </button>
-
-              <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="min-h-[30px] rounded font-bold bg-slate-500 hover:bg-slate-600 text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed">
+              <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm"'}>
                 RESET
               </button>
             </div>
 
-            <div class="border-t border-slate-100 pt-1">
-              <div class="flex items-center justify-between bg-slate-900 text-white rounded p-1 shadow-inner gap-1">
-                <div id="lapContainer-${id}" class="h-6 overflow-y-auto no-scrollbar scroll-smooth flex-1 font-mono text-[10px] snap-y snap-mandatory">
-                  ${laps.length === 0 ? 
-                    '<div class="h-6 flex items-center justify-center text-slate-500 font-sans text-[9px]">記録なし</div>' : 
-                    laps.slice().reverse().map((lap, idx) => {
-                      const lapNum = laps.length - idx;
-                      return `
-                        <div class="h-6 snap-start flex items-center justify-between px-1 ${lap.type === 'STOP' ? 'bg-rose-950/60 text-rose-300' : 'text-slate-200'}">
-                          <span class="font-bold text-[9px] text-slate-400 mr-1">#${lapNum}${lap.type === 'STOP' ? '(STOP)' : ''}</span>
-                          <div class="flex items-center gap-1.5 font-black tracking-tight">
-                            <span class="text-amber-400">L:${lap.lapTime}</span>
-                            <span class="text-slate-600">|</span>
-                            <span class="text-blue-400">S:${lap.splitTime}</span>
-                          </div>
-                        </div>
-                      `;
-                    }).join('')
-                  }
-                </div>
-
-                <div class="flex flex-col gap-0.5 flex-shrink-0">
-                  <button onclick="scrollLap('${id}', -1)" title="前のLAP" class="w-4 h-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-300 rounded-xs flex items-center justify-center text-[7px] leading-none transition">
-                    ▲
-                  </button>
-                  <button onclick="scrollLap('${id}', 1)" title="次のLAP" class="w-4 h-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-300 rounded-xs flex items-center justify-center text-[7px] leading-none transition">
-                    ▼
-                  </button>
-                </div>
-              </div>
+            <!-- h-[22px] でタイム表示（LAP/SPLIT）を1行分だけ見せるように固定 -->
+            <div id="lapContainer-${id}" class="h-[22px] overflow-y-auto no-scrollbar bg-slate-50/80 rounded px-1 border border-slate-100 mt-1">
+              ${lapsHtml || '<div class="text-[10px] text-slate-400 text-center py-0.5 leading-none">記録なし</div>'}
             </div>
-
           </div>
         `;
       }).join('');
     }
 
-    function tick() {
-      Object.keys(state.stopwatches).forEach(id => {
+    function updateDisplays() {
+      const keys = Object.keys(state.stopwatches);
+      keys.forEach(id => {
         const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const displayEl = document.getElementById(`display-${id}`);
-          if (displayEl) {
-            displayEl.innerText = formatTime(getElapsedTime(sw));
-          }
+        const displayEl = document.getElementById(`display-${id}`);
+        if (displayEl && sw) {
+          displayEl.innerText = formatTime(getElapsedTime(sw));
         }
       });
-      requestAnimationFrame(tick);
+      requestAnimationFrame(updateDisplays);
     }
 
     window.addEventListener('DOMContentLoaded', () => {
       initP2P();
+      if (Object.keys(state.stopwatches).length === 0) {
+        const now = Date.now();
+        for (let i = 1; i <= 3; i++) {
+          const id = 'sw_' + now + '_' + i;
+          state.stopwatches[id] = {
+            id,
+            name: `艇 ${i}`,
+            isRunning: false,
+            startTime: 0,
+            accumulatedTime: 0,
+            laps: []
+          };
+        }
+      }
       renderStructure();
-      requestAnimationFrame(tick);
+      requestAnimationFrame(updateDisplays);
     });
   </script>
 </body>
