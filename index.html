@@ -665,7 +665,7 @@
       });
     };
 
-    // 出力データ生成（SPLIT行のみ出力するように変更）
+    // 出力・プレビューデータ生成（SPLIT行のみ出力）
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -760,22 +760,43 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    // LINE画像転送処理（Web Share API / 画像共有）
+    // LINE画像転送処理（画面外に要素を複製して白飛びを防止）
     window.sendToLine = async () => {
       const container = document.getElementById('previewTableContainer');
-      if (!container) return;
+      if (!container || !container.firstElementChild) return alert("表示するデータがありません");
 
       showToast("画像を生成中...");
 
+      // 白飛び防止：画面外の一時領域に複製してレンダリング
+      const tempWrapper = document.createElement('div');
+      tempWrapper.style.position = 'absolute';
+      tempWrapper.style.left = '-9999px';
+      tempWrapper.style.top = '0';
+      tempWrapper.style.backgroundColor = '#ffffff';
+      tempWrapper.style.padding = '12px';
+
+      const clone = container.firstElementChild.cloneNode(true);
+      tempWrapper.appendChild(clone);
+      document.body.appendChild(tempWrapper);
+
       try {
-        const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff' });
-        
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        const canvas = await html2canvas(tempWrapper, {
+          scale: 2,
+          backgroundColor: '#ffffff',
+          useCORS: true,
+          logging: false
+        });
+
+        document.body.removeChild(tempWrapper);
+
         canvas.toBlob(async (blob) => {
           if (!blob) return alert("画像の生成に失敗しました");
 
           const file = new File([blob], `RowingResult_${Date.now()}.png`, { type: 'image/png' });
 
-          // Web Share API（スマホ等の画像直接共有機能）
+          // Web Share API（スマホ等の画像共有メニュー呼び出し）
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
               await navigator.share({
@@ -789,17 +810,19 @@
             }
           }
 
-          // 非対応環境用のフォールバック（画像保存＋LINEテキスト連携）
+          // 非対応ブラウザ用のフォールバック（自動保存 + LINEアプリ呼び出し）
           const link = document.createElement('a');
           link.download = `RowingResult_${Date.now()}.png`;
           link.href = canvas.toDataURL('image/png');
           link.click();
 
-          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像をダウンロードしました。')}`;
+          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像を保存しました。')}`;
           window.open(lineUrl, '_blank');
           showToast("画像を保存しました。LINEへ遷移します。");
         }, 'image/png');
+
       } catch (e) {
+        if (tempWrapper.parentNode) document.body.removeChild(tempWrapper);
         alert("画像転送処理でエラーが発生しました。");
       }
     };
@@ -880,7 +903,7 @@
             </button>
           </div>
 
-          <!-- 最新LAP / SPLIT表示 -->
+          <!-- 最新LAP / SPLIT表示（カード上） -->
           <div class="bg-slate-50 rounded border border-slate-100 px-1 py-0.5 shrink-0 flex items-center justify-center h-[18px]">
             <div class="w-full">
               ${lapDisplayHtml}
