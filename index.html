@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ ver2</title>
+  <title>Rowing マルチストップウォッチ ver2 (スマホ対応版)</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PeerJS for P2P Realtime Sync -->
@@ -33,15 +33,15 @@
       
       <!-- 上段：ステータス・共有ID・全選択・選択START・選択STOP・艇数・補助操作 -->
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-1.5 mb-1.5 text-xs">
-        <div class="flex items-center gap-2 flex-wrap">
+        <div class="flex items-center gap-1.5 flex-wrap">
           <!-- 接続ステータス -->
-          <span id="statusBadge" class="px-1.5 py-0.5 font-bold rounded-full bg-amber-100 text-amber-800 flex items-center gap-1 text-[10px] border border-amber-300">
+          <span id="statusBadge" class="px-2 py-0.5 font-bold rounded-full bg-amber-100 text-amber-800 flex items-center gap-1 text-[10px] border border-amber-300">
             <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
             <span id="statusText">接続準備中...</span>
           </span>
 
           <!-- 共有ID -->
-          <div class="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
+          <div class="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[10px]">
             <span class="text-slate-500 font-medium">共有ID:</span>
             <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600"></span>
           </div>
@@ -54,13 +54,11 @@
 
           <!-- 選択START -->
           <button onclick="batchStartWithSound()" class="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
-            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
             選択START
           </button>
 
           <!-- 選択STOP -->
           <button onclick="batchStopWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
-            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
             選択STOP
           </button>
 
@@ -82,45 +80,25 @@
 
       <!-- 下段：メイン操作ボタン群 -->
       <div class="flex flex-wrap items-center justify-start gap-1 text-[11px]">
-        <!-- 全体STOP -->
-        <button onclick="stopAllTimersWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
+        <button onclick="stopAllTimersWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           全体STOP
         </button>
-
-        <!-- 追加 -->
-        <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-          追加
+        <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
+          +追加
         </button>
-
-        <!-- 削除 -->
-        <button onclick="removeTimer()" class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
-          削除
+        <button onclick="removeTimer()" class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
+          -削除
         </button>
-
-        <!-- 画面で結果表示 -->
-        <button onclick="openPreviewModal()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+        <button onclick="openPreviewModal()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           データ表示
         </button>
-
-        <!-- エクセル出力 -->
-        <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+        <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           Excel出力
         </button>
-
-        <!-- CSV出力 -->
-        <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+        <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           CSV出力
         </button>
-
-        <!-- LINE転送 -->
-        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049b42] text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M24 10.304c0-5.369-5.383-9.738-12-9.738-6.616 0-12 4.369-12 9.738 0 4.814 4.269 8.846 10.036 9.608.391.084.922.258 1.057.592.122.303.079.778.039 1.085l-.171 1.027c-.053.303-.242 1.186 1.039.647 1.281-.54 6.911-4.069 9.428-6.967 1.739-1.907 2.572-3.844 2.572-6.002z"/></svg>
+        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049b42] text-white font-bold px-2.5 py-1 rounded shadow-sm transition active:scale-95">
           LINE転送
         </button>
       </div>
@@ -128,55 +106,33 @@
 
     <!-- 通知トースト -->
     <div id="toast" class="fixed bottom-4 right-4 bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-2xl text-xs font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-2 border border-slate-700">
-      <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-      <span id="toastMsg">URLをコピーしました！</span>
+      <span id="toastMsg">通知メッセージ</span>
     </div>
 
-    <!-- 画面上での結果表示用モーダル -->
+    <!-- 結果表示モーダル -->
     <div id="previewModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
       <div class="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-        
-        <!-- モーダルヘッダー -->
-        <div class="p-3 bg-slate-800 text-white flex items-center justify-between border-b border-slate-700">
-          <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <h3 class="font-bold text-sm">計測データプレビュー (SPLITのみ)</h3>
-          </div>
-          <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg transition">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-          </button>
+        <div class="p-3 bg-slate-800 text-white flex items-center justify-between">
+          <h3 class="font-bold text-sm">計測データプレビュー (SPLITのみ)</h3>
+          <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
         </div>
-
-        <!-- テーブル表示領域 -->
         <div class="p-3 overflow-auto flex-1 bg-slate-50">
           <div id="previewTableContainer" class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto"></div>
         </div>
-
-        <!-- モーダルフッター -->
         <div class="p-2.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-          <button onclick="copyTableToClipboard()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition active:scale-95">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 012-2h2a2 2 0 012-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+          <button onclick="copyTableToClipboard()" class="bg-indigo-600 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm">
             クリップボードにコピー
           </button>
-
           <div class="flex items-center gap-1.5">
-            <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2.5 py-1.5 rounded-lg shadow-sm">
-              Excel保存
-            </button>
-            <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 text-white font-bold px-2.5 py-1.5 rounded-lg shadow-sm">
-              CSV保存
-            </button>
-            <button onclick="closePreviewModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg">
-              閉じる
-            </button>
+            <button onclick="exportExcel()" class="bg-emerald-700 text-white font-bold px-2.5 py-1.5 rounded-lg shadow-sm">Excel保存</button>
+            <button onclick="closePreviewModal()" class="bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg">閉じる</button>
           </div>
         </div>
-
       </div>
     </div>
 
-    <!-- ストップウォッチカード一覧 -->
-    <main id="app" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2"></main>
+    <!-- ストップウォッチカード一覧（スマホ1〜2列、タブレット/PCで多列化） -->
+    <main id="app" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2.5"></main>
 
   </div>
 
@@ -191,7 +147,18 @@
     let lastSyncServerTime = Date.now();
     let lastSyncLocalTime = Date.now();
 
-    // 音声効果
+    // 画面スリープ防止 (Wake Lock)
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.log('Wake Lock request failed:', err);
+      }
+    }
+
+    // 効果音生成
     let audioCtx = null;
     function initAudio() {
       if (!audioCtx) {
@@ -209,14 +176,14 @@
         const gain = audioCtx.createGain();
         osc.type = type;
         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start();
         osc.stop(audioCtx.currentTime + duration);
       } catch (e) {
-        console.warn('Audio playback error:', e);
+        console.warn('Audio error:', e);
       }
     }
 
@@ -237,16 +204,7 @@
     }
     function resetAllTimersWithSound() { playBeep(349.23, 'triangle', 0.15); resetAllTimers(); }
 
-    const peerConfig = {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-      }
-    };
-
+    // ルームID設定
     let roomCode = location.hash.replace('#', '');
     if (!roomCode) {
       roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
@@ -260,58 +218,56 @@
       return lastSyncServerTime + (Date.now() - lastSyncLocalTime);
     }
 
+    // P2P初期化（スマホでの接続失敗時も単体動作するようにガード）
     function initP2P() {
+      if (typeof Peer === 'undefined') {
+        updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
+        return;
+      }
+
       try {
-        peer = new Peer(hostPeerId, peerConfig);
+        peer = new Peer(hostPeerId, {
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
         
         peer.on('open', () => {
           isHost = true;
           updateStatus('ホスト (親機)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
 
-        peer.on('disconnected', () => {
-          if (peer && !peer.destroyed) peer.reconnect();
-        });
-
         peer.on('connection', (conn) => {
           clientConns = clientConns.filter(c => c && c.open && c.peer !== conn.peer);
           clientConns.push(conn);
-
           conn.on('open', () => {
             conn.send({ type: 'SYNC_STATE', state, serverTime: Date.now() });
             updateHostStatus();
           });
           conn.on('data', (data) => dispatchAction(data));
-          conn.on('close', () => {
-            clientConns = clientConns.filter(c => c !== conn && c.open);
-            updateHostStatus();
-          });
-          conn.on('error', () => {
-            clientConns = clientConns.filter(c => c !== conn && c.open);
-            updateHostStatus();
-          });
+          conn.on('close', () => { updateHostStatus(); });
         });
 
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
-            peer = new Peer(peerConfig);
+            peer = new Peer({ config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
             peer.on('open', () => connectToHost());
-            peer.on('disconnected', () => {
-              if (peer && !peer.destroyed) peer.reconnect();
-            });
           } else {
-            console.error('Peer error:', err);
-            updateStatus('通信エラー', 'bg-rose-100 text-rose-800 border-rose-300');
+            updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
           }
         });
       } catch (e) {
-        updateStatus('オフライン', 'bg-amber-100 text-amber-800 border-amber-300');
+        updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
       }
     }
 
     function connectToHost() {
-      updateStatus('ホストへ接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
+      if (!peer) return;
+      updateStatus('接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
       hostConn = peer.connect(hostPeerId, { reliable: true });
 
       hostConn.on('open', () => {
@@ -320,7 +276,6 @@
       });
 
       hostConn.on('data', (data) => {
-        if (data.type === 'PING') return;
         if (data.type === 'SYNC_STATE') {
           if (data.serverTime) {
             lastSyncServerTime = data.serverTime;
@@ -331,48 +286,15 @@
         }
       });
 
-      hostConn.on('close', () => {
-        updateStatus('切断 (再接続中...)', 'bg-rose-100 text-rose-800 border-rose-300');
-        setTimeout(connectToHost, 3000);
-      });
-
       hostConn.on('error', () => {
-        updateStatus('接続失敗', 'bg-rose-100 text-rose-800 border-rose-300');
-        setTimeout(connectToHost, 3000);
+        updateStatus('単体動作モード', 'bg-slate-200 text-slate-700 border-slate-300');
       });
     }
-
-    setInterval(() => {
-      if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
-      if (isHost) {
-        clientConns = clientConns.filter(c => c && c.open);
-        clientConns.forEach(conn => {
-          try {
-            conn.send({ type: 'PING' });
-          } catch (e) {
-            clientConns = clientConns.filter(c => c !== conn);
-          }
-        });
-        updateHostStatus();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send({ type: 'PING' });
-      }
-    }, 5000);
-
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
-        if (!isHost) {
-          if (!hostConn || !hostConn.open) connectToHost();
-          else hostConn.send({ type: 'REQUEST_SYNC' });
-        }
-      }
-    });
 
     function updateHostStatus() {
       if (isHost) {
         const activePeers = new Set(clientConns.filter(c => c && c.open).map(c => c.peer));
-        updateStatus(`ホスト (接続端末: ${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
+        updateStatus(`ホスト (${activePeers.size}台接続)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
@@ -381,24 +303,16 @@
       const statusText = document.getElementById('statusText');
       if (badge && statusText) {
         statusText.innerText = text;
-        badge.className = `px-1.5 py-0.5 font-bold rounded-full flex items-center gap-1 border text-[10px] ${colorClass}`;
+        badge.className = `px-2 py-0.5 font-bold rounded-full flex items-center gap-1 border text-[10px] ${colorClass}`;
       }
     }
 
     function dispatchAction(action) {
-      if (action.type === 'PING') return;
-      if (action.type === 'REQUEST_SYNC' && isHost) {
-        broadcastState();
-        return;
-      }
-
-      if (isHost) {
+      if (isHost || !hostConn || !hostConn.open) {
         handleAction(action);
-        broadcastState();
+        if (isHost) broadcastState();
       } else if (hostConn && hostConn.open) {
         hostConn.send(action);
-      } else {
-        handleAction(action);
       }
     }
 
@@ -469,9 +383,7 @@
               laps.push({
                 lapTime: formatTime(lapDuration),
                 splitTime: formatTime(currentSplit),
-                rawSplit: currentSplit,
-                timestamp: now,
-                type: 'STOP'
+                rawSplit: currentSplit
               });
 
               sw.accumulatedTime = currentSplit;
@@ -494,9 +406,7 @@
               laps.push({
                 lapTime: formatTime(lapDuration),
                 splitTime: formatTime(currentSplit),
-                rawSplit: currentSplit,
-                timestamp: now,
-                type: 'STOP'
+                rawSplit: currentSplit
               });
 
               sw.accumulatedTime = currentSplit;
@@ -521,9 +431,7 @@
             laps.push({
               lapTime: formatTime(lapDuration),
               splitTime: formatTime(currentSplit),
-              rawSplit: currentSplit,
-              timestamp: now,
-              type: 'LAP'
+              rawSplit: currentSplit
             });
             swLap.laps = laps;
           }
@@ -557,9 +465,7 @@
               laps.push({
                 lapTime: formatTime(lapDuration),
                 splitTime: formatTime(currentSplit),
-                rawSplit: currentSplit,
-                timestamp: now,
-                type: 'STOP'
+                rawSplit: currentSplit
               });
 
               target.accumulatedTime = currentSplit;
@@ -595,7 +501,7 @@
     window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
     window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
     window.resetAllTimers = () => {
-      if (confirm("停止中のストップウォッチをリセットしますか？（計測中の艇は維持されます）")) dispatchAction({ type: 'RESET_ALL' });
+      if (confirm("停止中のストップウォッチをリセットしますか？")) dispatchAction({ type: 'RESET_ALL' });
     };
     window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
     window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
@@ -609,7 +515,6 @@
       dispatchAction({ type: 'BATCH_STOP', ids: Array.from(selectedIds) });
     };
 
-    // mm:ss.00 形式フォーマット (1/100秒表示)
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -666,14 +571,16 @@
 
     window.copyShareUrl = () => {
       const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      navigator.clipboard.writeText(shareUrl).then(() => {
-        showToast('共有URLをコピーしました！');
-      });
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(shareUrl).then(() => showToast('共有URLをコピーしました！'));
+      } else {
+        alert(`共有URL: ${shareUrl}`);
+      }
     };
 
     window.shareLine = () => {
       const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      const msg = `【Rowingマルチストップウォッチ】\nリアルタイム計測ルーム(ID: ${roomCode})に参加してください：\n${shareUrl}`;
+      const msg = `【Rowingマルチストップウォッチ】\nリアルタイム計測(ID: ${roomCode})：\n${shareUrl}`;
       window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
     };
 
@@ -685,81 +592,39 @@
       });
 
       const header = ['艇名', '種別'];
-      for (let i = 1; i <= maxLaps; i++) {
-        header.push(`P${i}`);
-      }
+      for (let i = 1; i <= maxLaps; i++) header.push(`P${i}`);
       const aoa = [header];
 
       Object.values(state.stopwatches).forEach(sw => {
         const laps = sw.laps || [];
         const splitRow = [sw.name, 'SPLIT'];
-
         if (laps.length === 0) {
-          const current = formatTime(getElapsedTime(sw));
-          splitRow.push(current);
+          splitRow.push(formatTime(getElapsedTime(sw)));
         } else {
-          laps.forEach(lap => {
-            splitRow.push(lap.splitTime);
-          });
+          laps.forEach(lap => splitRow.push(lap.splitTime));
         }
         aoa.push(splitRow);
       });
-
       return aoa;
     }
 
-    function createOptimizedWorksheet(aoa, isCsv = false) {
-      const processedAoa = aoa.map((row, rIdx) => {
-        if (rIdx === 0) return row;
-        return row.map((cell, cIdx) => {
-          if (cIdx >= 2 && typeof cell === 'string' && cell.match(/^\d{2}:\d{2}\.\d{2}$/)) {
-            return isCsv ? `="${cell}"` : cell;
-          }
-          return cell;
-        });
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(processedAoa, { raw: true });
-      
-      Object.keys(ws).forEach(key => {
-        if (key[0] !== '!') {
-          ws[key].t = 's';
-        }
-      });
-
-      if (processedAoa.length > 0) {
-        const colWidths = processedAoa[0].map((_, colIdx) => {
-          let maxLen = 0;
-          processedAoa.forEach(row => {
-            const val = row[colIdx] ? String(row[colIdx]).replace(/^="|"$/g, '') : '';
-            let len = 0;
-            for (let i = 0; i < val.length; i++) {
-              len += val.charCodeAt(i) > 255 ? 2 : 1;
-            }
-            if (len > maxLen) maxLen = len;
-          });
-          return { wch: Math.max(maxLen + 3, 6) };
-        });
-        ws['!cols'] = colWidths;
-      }
-      return ws;
-    }
-
     window.exportExcel = () => {
+      if (typeof XLSX === 'undefined') return alert("Excel出力ライブラリの読み込みに失敗しました");
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, false);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Result");
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
     window.exportCsv = () => {
+      if (typeof XLSX === 'undefined') return alert("CSV出力ライブラリの読み込みに失敗しました");
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, true);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
       const csv = XLSX.utils.sheet_to_csv(ws);
       const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
@@ -775,16 +640,15 @@
       const aoa = generateExportData();
       const container = document.getElementById('previewTableContainer');
 
-      let tableHtml = `<table class="w-auto text-xs text-left border-collapse"><thead><tr class="bg-slate-100 text-slate-700 font-bold border-b border-slate-300">`;
+      let tableHtml = `<table class="w-auto text-xs text-left border-collapse"><thead><tr class="bg-slate-100 font-bold border-b border-slate-300">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th class="p-2 border-r border-slate-200 whitespace-nowrap min-w-[50px]">${col}</th>`;
+        tableHtml += `<th class="p-2 border-r border-slate-200 whitespace-nowrap">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
       for (let i = 1; i < aoa.length; i++) {
-        const row = aoa[i];
-        tableHtml += `<tr class="bg-white border-b border-slate-200 hover:bg-blue-50/50">`;
-        row.forEach((cell, cellIdx) => {
+        tableHtml += `<tr class="bg-white border-b border-slate-200">`;
+        aoa[i].forEach((cell, cellIdx) => {
           const fontClass = cellIdx >= 2 ? 'font-mono' : 'font-bold';
           tableHtml += `<td class="p-2 border-r border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
         });
@@ -808,9 +672,9 @@
         let cells = Array.from(row.cells).map(c => c.innerText);
         tsv.push(cells.join('\t'));
       }
-      navigator.clipboard.writeText(tsv.join('\n')).then(() => {
-        showToast('クリップボードにコピーしました！');
-      });
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(tsv.join('\n')).then(() => showToast('コピーしました！'));
+      }
     };
 
     function renderStructure() {
@@ -841,14 +705,12 @@
         }).join('');
 
         return `
-          <!-- h-48 でストップウォッチカード全体の縦幅を固定 -->
+          <!-- カード縦幅固定：h-48 -->
           <div class="bg-white rounded-xl shadow-sm border ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'} p-2 flex flex-col justify-between h-48 transition-all">
             <div class="flex items-center justify-between gap-1 mb-1 pb-1 border-b border-slate-100">
-              <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300">
+              <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-4 h-4 text-blue-600 rounded border-slate-300">
               <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" class="font-bold text-xs text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full px-1 py-0.5">
-              <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5 transition" title="削除">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-              </button>
+              <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-1 font-bold text-xs" title="削除">✕</button>
             </div>
 
             <div class="text-center my-0.5">
@@ -858,18 +720,18 @@
             </div>
 
             <div class="grid grid-cols-3 gap-1 my-1">
-              <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm">
+              <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-bold py-1.5 px-1 rounded text-[11px] active:scale-95 shadow-sm">
                 ${sw.isRunning ? 'STOP' : 'START'}
               </button>
-              <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm"'}>
+              <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1.5 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold py-1.5 px-1 rounded text-[11px] active:scale-95 shadow-sm"'}>
                 LAP
               </button>
-              <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white font-bold py-1 px-1 rounded text-[11px] transition active:scale-95 shadow-sm"'}>
+              <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled class="bg-slate-200 text-slate-400 font-bold py-1.5 px-1 rounded text-[11px] cursor-not-allowed"' : 'class="bg-slate-500 hover:bg-slate-600 active:bg-slate-700 text-white font-bold py-1.5 px-1 rounded text-[11px] active:scale-95 shadow-sm"'}>
                 RESET
               </button>
             </div>
 
-            <!-- h-[22px] でタイム表示（LAP/SPLIT）を1行分だけ見せるように固定 -->
+            <!-- タイム表示エリア（高さ固定：22pxで1行のみ可視） -->
             <div id="lapContainer-${id}" class="h-[22px] overflow-y-auto no-scrollbar bg-slate-50/80 rounded px-1 border border-slate-100 mt-1">
               ${lapsHtml || '<div class="text-[10px] text-slate-400 text-center py-0.5 leading-none">記録なし</div>'}
             </div>
@@ -891,7 +753,7 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      initP2P();
+      requestWakeLock();
       if (Object.keys(state.stopwatches).length === 0) {
         const now = Date.now();
         for (let i = 1; i <= 3; i++) {
@@ -907,6 +769,7 @@
         }
       }
       renderStructure();
+      initP2P();
       requestAnimationFrame(updateDisplays);
     });
   </script>
