@@ -666,10 +666,14 @@
       });
     };
 
+    // 修正版：LINE URL共有 (ローカルファイルチェック & 公式Webエンドポイント利用)
     window.shareLineUrl = () => {
+      if (location.protocol === 'file:') {
+        alert("ローカルファイル(file://)からはLINE共有できません。\nWebサーバー(https://)に保存するか、URLコピーボタンで共有IDをコピーして送信してください。");
+        return;
+      }
       const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      const msg = `【Rowingストップウォッチ】共有ID: ${roomCode}\n${shareUrl}`;
-      const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(msg)}`;
+      const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareUrl)}`;
       window.open(lineUrl, '_blank');
     };
 
@@ -731,7 +735,7 @@
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    // プレビュー表示用HTML生成（完全に固定インラインスタイル適用）
+    // プレビュー表示用HTML生成（インラインスタイル固定）
     function renderPreviewTableHtml() {
       const aoa = generateExportData();
       let tableHtml = `<div id="captureTarget" style="background-color: #ffffff; color: #000000; padding: 16px; border-radius: 8px; border: 1px solid #cbd5e1; display: inline-block;">`;
@@ -803,15 +807,13 @@
             }
           }
 
-          // PC等でのフォールバック
+          // PC/ブラウザ等でのフォールバック
           const link = document.createElement('a');
           link.download = `RowingResult_${Date.now()}.png`;
           link.href = canvas.toDataURL('image/png');
           link.click();
 
-          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像をダウンロード保存しました。')}`;
-          window.open(lineUrl, '_blank');
-          showToast("画像を保存しました。LINEへ遷移します。");
+          showToast("画像を保存しました。LINEに貼り付けて共有してください。");
         }, 'image/png');
 
       } catch (e) {
