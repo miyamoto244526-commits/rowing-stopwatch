@@ -274,14 +274,23 @@
         });
 
         peer.on('connection', (conn) => {
+          // 重複接続の防止：既存の同PeerID接続または切断済み接続を除去
+          clientConns = clientConns.filter(c => c && c.open && c.peer !== conn.peer);
           clientConns.push(conn);
+
           conn.on('open', () => {
             conn.send({ type: 'SYNC_STATE', state, serverTime: Date.now() });
             updateHostStatus();
           });
           conn.on('data', (data) => dispatchAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
-          conn.on('error', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
+          conn.on('close', () => {
+            clientConns = clientConns.filter(c => c !== conn && c.open);
+            updateHostStatus();
+          });
+          conn.on('error', () => {
+            clientConns = clientConns.filter(c => c !== conn && c.open);
+            updateHostStatus();
+          });
         });
 
         peer.on('error', (err) => {
@@ -334,12 +343,20 @@
       });
     }
 
+    // 定期ハートビートと古い接続の自動クリーンアップ
     setInterval(() => {
       if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
       if (isHost) {
+        // 切断された接続をフィルタリングで除去
+        clientConns = clientConns.filter(c => c && c.open);
         clientConns.forEach(conn => {
-          if (conn && conn.open) conn.send({ type: 'PING' });
+          try {
+            conn.send({ type: 'PING' });
+          } catch (e) {
+            clientConns = clientConns.filter(c => c !== conn);
+          }
         });
+        updateHostStatus();
       } else if (hostConn && hostConn.open) {
         hostConn.send({ type: 'PING' });
       }
@@ -357,8 +374,9 @@
 
     function updateHostStatus() {
       if (isHost) {
-        const count = clientConns.filter(c => c.open).length;
-        updateStatus(`ホスト (接続端末: ${count}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
+        // openかつユニークなPeerIDのみをカウント
+        const activePeers = new Set(clientConns.filter(c => c && c.open).map(c => c.peer));
+        updateStatus(`ホスト (接続端末: ${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
