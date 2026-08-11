@@ -133,7 +133,7 @@
         <div class="p-3 bg-slate-800 text-white flex items-center justify-between border-b border-slate-700">
           <div class="flex items-center gap-2">
             <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <h3 class="font-bold text-sm">計測データプレビュー</h3>
+            <h3 class="font-bold text-sm">計測データプレビュー (SPLIT)</h3>
           </div>
           <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -255,10 +255,19 @@
     function initP2P() {
       try {
         peer = new Peer(hostPeerId, peerConfig);
+        
         peer.on('open', () => {
           isHost = true;
           updateStatus('ホスト (親機)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
         });
+
+        peer.on('disconnected', () => {
+          console.warn('PeerJS server disconnected. Attempting reconnect...');
+          if (peer && !peer.destroyed) {
+            peer.reconnect();
+          }
+        });
+
         peer.on('connection', (conn) => {
           clientConns.push(conn);
           conn.on('open', () => {
@@ -269,12 +278,17 @@
           conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
           conn.on('error', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
         });
+
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
             peer = new Peer(peerConfig);
             peer.on('open', () => connectToHost());
+            peer.on('disconnected', () => {
+              if (peer && !peer.destroyed) peer.reconnect();
+            });
           } else {
+            console.error('Peer error:', err);
             updateStatus('通信エラー', 'bg-rose-100 text-rose-800 border-rose-300');
           }
         });
@@ -286,8 +300,14 @@
     function connectToHost() {
       updateStatus('ホストへ接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
       hostConn = peer.connect(hostPeerId, { reliable: true });
-      hostConn.on('open', () => updateStatus('同期中 (子機)', 'bg-blue-100 text-blue-800 border-blue-300'));
+
+      hostConn.on('open', () => {
+        updateStatus('同期中 (子機)', 'bg-blue-100 text-blue-800 border-blue-300');
+        hostConn.send({ type: 'REQUEST_SYNC' });
+      });
+
       hostConn.on('data', (data) => {
+        if (data.type === 'PING') return;
         if (data.type === 'SYNC_STATE') {
           if (data.serverTime) {
             lastSyncServerTime = data.serverTime;
@@ -297,12 +317,49 @@
           renderStructure();
         }
       });
+
       hostConn.on('close', () => {
         updateStatus('切断 (再接続中...)', 'bg-rose-100 text-rose-800 border-rose-300');
-        setTimeout(connectToHost, 2000);
+        setTimeout(connectToHost, 3000);
       });
-      hostConn.on('error', () => updateStatus('接続失敗', 'bg-rose-100 text-rose-800 border-rose-300'));
+
+      hostConn.on('error', () => {
+        updateStatus('接続失敗', 'bg-rose-100 text-rose-800 border-rose-300');
+        setTimeout(connectToHost, 3000);
+      });
     }
+
+    // 放置・タイムアウト防止用ハートビート機能
+    setInterval(() => {
+      if (peer && peer.disconnected && !peer.destroyed) {
+        peer.reconnect();
+      }
+      if (isHost) {
+        clientConns.forEach(conn => {
+          if (conn && conn.open) {
+            conn.send({ type: 'PING' });
+          }
+        });
+      } else if (hostConn && hostConn.open) {
+        hostConn.send({ type: 'PING' });
+      }
+    }, 5000);
+
+    // スマホのスリープ復帰時の自動再同期
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        if (peer && peer.disconnected && !peer.destroyed) {
+          peer.reconnect();
+        }
+        if (!isHost) {
+          if (!hostConn || !hostConn.open) {
+            connectToHost();
+          } else {
+            hostConn.send({ type: 'REQUEST_SYNC' });
+          }
+        }
+      }
+    });
 
     function updateHostStatus() {
       if (isHost) {
@@ -321,6 +378,12 @@
     }
 
     function dispatchAction(action) {
+      if (action.type === 'PING') return;
+      if (action.type === 'REQUEST_SYNC' && isHost) {
+        broadcastState();
+        return;
+      }
+
       if (isHost) {
         handleAction(action);
         broadcastState();
@@ -481,7 +544,7 @@
     function broadcastState() {
       const payload = { type: 'SYNC_STATE', state, serverTime: Date.now() };
       clientConns.forEach(conn => {
-        if (conn.open) conn.send(payload);
+        if (conn && conn.open) conn.send(payload);
       });
     }
 
@@ -509,7 +572,6 @@
       dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
     };
 
-    // LAPコンテナの1行スクロール制御 (▲: -1 / ▼: +1)
     window.scrollLap = (id, direction) => {
       const container = document.getElementById(`lapContainer-${id}`);
       if (container) {
@@ -555,7 +617,7 @@
       window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
     };
 
-    // データ出力用配列（AOA）を生成する共通ヘルパー
+    // 出力用データ生成（SPLIT行のみ、P1, P2...ヘッダー）
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -563,32 +625,29 @@
         if (lCount > maxLaps) maxLaps = lCount;
       });
 
-      const header = ['艇名', 'データ種別'];
-      for (let i = 1; i <= maxLaps; i++) header.push(`LAP${i}`);
+      const header = ['艇名'];
+      for (let i = 1; i <= maxLaps; i++) {
+        header.push(`P${i}`);
+      }
       const aoa = [header];
 
       Object.values(state.stopwatches).forEach(sw => {
         const laps = sw.laps || [];
-        const splitRow = [sw.name, 'SPLIT'];
-        const lapRow = [sw.name, 'LAP'];
+        const splitRow = [sw.name];
 
         if (laps.length === 0) {
           splitRow.push(formatTime(getElapsedTime(sw)));
-          lapRow.push('-');
         } else {
           laps.forEach(lap => {
             splitRow.push(lap.splitTime);
-            lapRow.push(lap.lapTime);
           });
         }
         aoa.push(splitRow);
-        aoa.push(lapRow);
       });
 
       return aoa;
     }
 
-    // スマホ用：画面上でのデータプレビュー表示機能
     window.openPreviewModal = () => {
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("表示するデータがありません");
@@ -604,10 +663,9 @@
 
       for (let i = 1; i < aoa.length; i++) {
         const row = aoa[i];
-        const isSplit = row[1] === 'SPLIT';
-        tableHtml += `<tr class="${isSplit ? 'bg-white' : 'bg-slate-50/60'} border-b border-slate-200 hover:bg-blue-50/50">`;
+        tableHtml += `<tr class="${i % 2 === 0 ? 'bg-slate-50/60' : 'bg-white'} border-b border-slate-200 hover:bg-blue-50/50">`;
         row.forEach((cell, cellIdx) => {
-          const fontClass = cellIdx >= 2 ? 'font-mono' : 'font-bold';
+          const fontClass = cellIdx >= 1 ? 'font-mono' : 'font-bold';
           tableHtml += `<td class="p-2 border-r border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
@@ -622,7 +680,6 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    // プレビューデータのクリップボードコピー（Excel/スプレッドシートペースト対応）
     window.copyTableToClipboard = () => {
       const aoa = generateExportData();
       const tsvText = aoa.map(row => row.join('\t')).join('\n');
@@ -635,7 +692,6 @@
       });
     };
 
-    // SheetJSを使用した確実なCSV保存
     window.exportCsv = () => {
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
@@ -654,11 +710,10 @@
         XLSX.writeFile(wb, finalFileName, { bookType: 'csv' });
       } catch (err) {
         console.error("CSV Export error:", err);
-        alert("CSVの保存に失敗しました。ブラウザの書き出し許可を確認してください。");
+        alert("CSVの保存に失敗しました。");
       }
     };
 
-    // SheetJSを使用したExcel (.xlsx) 保存
     window.exportExcel = () => {
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
@@ -731,7 +786,6 @@
                 : 'border-slate-200'
           }">
             
-            <!-- ヘッダー：選択チェックと艇名 -->
             <div class="flex items-center justify-between gap-1 mb-1">
               <div class="flex items-center gap-1 flex-1 min-w-0">
                 <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
@@ -743,12 +797,10 @@
               </button>
             </div>
 
-            <!-- mm:ss.00 メインタイム表示 -->
             <div class="bg-slate-900 text-emerald-400 font-mono font-black text-base sm:text-xl md:text-2xl text-center py-1 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tighter whitespace-nowrap overflow-hidden">
               <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
             </div>
 
-            <!-- 操作ボタン（START/STOP, LAP, RESET） -->
             <div class="grid grid-cols-3 gap-1 my-1.5">
               <button onclick="toggleStartWithSound('${id}')" class="min-h-[30px] rounded font-bold text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center ${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'}">
                 ${sw.isRunning ? 'STOP' : 'START'}
@@ -763,11 +815,8 @@
               </button>
             </div>
 
-            <!-- LAP / SPLIT 1行固定表示 ＋ 上下スクロールボタン -->
             <div class="border-t border-slate-100 pt-1">
               <div class="flex items-center justify-between bg-slate-900 text-white rounded p-1 shadow-inner gap-1">
-                
-                <!-- 1行分の高さ (h-6) に固定されたスライド表示コンテナ -->
                 <div id="lapContainer-${id}" class="h-6 overflow-y-auto no-scrollbar scroll-smooth flex-1 font-mono text-[10px] snap-y snap-mandatory">
                   ${laps.length === 0 ? 
                     '<div class="h-6 flex items-center justify-center text-slate-500 font-sans text-[9px]">記録なし</div>' : 
@@ -787,7 +836,6 @@
                   }
                 </div>
 
-                <!-- 過去のLAP/SPLIT閲覧用 上下スクロールボタン -->
                 <div class="flex flex-col gap-0.5 flex-shrink-0">
                   <button onclick="scrollLap('${id}', -1)" title="前のLAP" class="w-4 h-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-300 rounded-xs flex items-center justify-center text-[7px] leading-none transition">
                     ▲
@@ -796,7 +844,6 @@
                     ▼
                   </button>
                 </div>
-
               </div>
             </div>
 
@@ -805,7 +852,6 @@
       }).join('');
     }
 
-    // 高速描画更新ループ
     function tick() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
@@ -819,7 +865,6 @@
       requestAnimationFrame(tick);
     }
 
-    // 画面初期化
     window.addEventListener('DOMContentLoaded', () => {
       initP2P();
       renderStructure();
