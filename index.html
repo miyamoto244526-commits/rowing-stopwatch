@@ -177,6 +177,52 @@
     let lastSyncServerTime = Date.now();
     let lastSyncLocalTime = Date.now();
 
+    // ローカルストレージ読み書き
+    function saveStateToStorage() {
+      if (!roomCode) return;
+      try {
+        localStorage.setItem(`rowing_state_${roomCode}`, JSON.stringify(state));
+      } catch (e) {
+        console.error("Storage save failed:", e);
+      }
+    }
+
+    function loadStateFromStorage() {
+      if (!roomCode) return false;
+      try {
+        const saved = localStorage.getItem(`rowing_state_${roomCode}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.stopwatches && Object.keys(parsed.stopwatches).length > 0) {
+            state = parsed;
+            return true;
+          }
+        }
+      } catch (e) {
+        console.error("Storage load failed:", e);
+      }
+      return false;
+    }
+
+    // 初期状態として6枚のカードをセットアップ
+    function initDefaultStopwatches() {
+      state.stopwatches = {};
+      const now = Date.now();
+      for (let i = 1; i <= 6; i++) {
+        const id = 'sw_' + now + '_' + i + '_' + Math.floor(Math.random() * 1000);
+        state.stopwatches[id] = {
+          id,
+          name: `艇 ${i}`,
+          isRunning: false,
+          startTime: 0,
+          accumulatedTime: 0,
+          laps: []
+        };
+      }
+      saveStateToStorage();
+      renderStructure();
+    }
+
     // 音声処理
     let audioCtx = null;
     function initAudio() {
@@ -278,7 +324,14 @@
       cleanupP2P();
       state = { stopwatches: {} };
       selectedIds.clear();
-      renderStructure();
+
+      // ローカルストレージ復元。保存データがない場合は初期6艇を即時作成
+      const hasSavedData = loadStateFromStorage();
+      if (!hasSavedData || Object.keys(state.stopwatches).length === 0) {
+        initDefaultStopwatches();
+      } else {
+        renderStructure();
+      }
 
       hostPeerId = `rowing-app-room-v24-${roomCode}`;
       
@@ -299,9 +352,7 @@
         peer.on('open', () => {
           isHost = true;
           updateStatus('ホスト (親機)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
-          if (Object.keys(state.stopwatches).length === 0) {
-            dispatchAction({ type: 'ADD' });
-          }
+          saveStateToStorage();
         });
 
         peer.on('disconnected', () => {
@@ -357,6 +408,7 @@
             lastSyncLocalTime = Date.now();
           }
           state = data.state;
+          saveStateToStorage();
           renderStructure();
         }
       });
@@ -392,11 +444,13 @@
 
       if (isHost) {
         handleAction(action);
+        saveStateToStorage();
         broadcastState();
       } else if (hostConn && hostConn.open) {
         hostConn.send(action);
       } else {
         handleAction(action);
+        saveStateToStorage();
       }
     }
 
@@ -635,6 +689,11 @@
       return `Result_${yyyy}${mm}${dd}_${hh}${min}.${ext}`;
     }
 
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     window.toggleSelect = (id) => {
       if (selectedIds.has(id)) selectedIds.delete(id);
       else selectedIds.add(id);
@@ -666,7 +725,6 @@
       });
     };
 
-    // 修正版：LINE URL共有 (ローカルファイルチェック & 公式Webエンドポイント利用)
     window.shareLineUrl = () => {
       if (location.protocol === 'file:') {
         alert("ローカルファイル(file://)からはLINE共有できません。\nWebサーバー(https://)に保存するか、URLコピーボタンで共有IDをコピーして送信してください。");
@@ -773,7 +831,6 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    // 画面上の表示ターゲットをそのまま高精度キャプチャして画像共有
     window.sendToLine = async () => {
       const target = document.getElementById('captureTarget');
       if (!target) return alert("表示するデータがありません");
@@ -793,7 +850,6 @@
 
           const file = new File([blob], `RowingResult_${Date.now()}.png`, { type: 'image/png' });
 
-          // OS標準共有機能（スマホのLINE直接共有対応）
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
               await navigator.share({
@@ -807,7 +863,6 @@
             }
           }
 
-          // PC/ブラウザ等でのフォールバック
           const link = document.createElement('a');
           link.download = `RowingResult_${Date.now()}.png`;
           link.href = canvas.toDataURL('image/png');
@@ -822,6 +877,7 @@
       }
     };
 
+    // 画面構造・カード描画
     function renderStructure() {
       const app = document.getElementById('app');
       const countEl = document.getElementById('count');
@@ -829,96 +885,99 @@
       
       if (countEl) countEl.innerText = keys.length;
 
-      const existingCards = new Set();
-      app.querySelectorAll('[data-id]').forEach(el => existingCards.add(el.getAttribute('data-id')));
-
-      keys.forEach(id => {
-        if (!existingCards.has(id)) {
-          const card = document.createElement('div');
-          card.setAttribute('data-id', id);
-          card.className = "h-[92px] min-h-[92px] max-h-[92px] bg-white rounded-lg shadow-sm border border-slate-200 p-1.5 flex flex-col justify-between relative overflow-hidden";
-          app.appendChild(card);
-        }
-      });
-
+      // 存在しない不要なカードの削除
       app.querySelectorAll('[data-id]').forEach(card => {
         const id = card.getAttribute('data-id');
         if (!state.stopwatches[id]) card.remove();
       });
 
+      // 各ストップウォッチカードの構築および更新
       keys.forEach(id => {
         const sw = state.stopwatches[id];
-        const card = app.querySelector(`[data-id="${id}"]`);
-        if (!card) return;
-
-        const isChecked = selectedIds.has(id);
-        const laps = sw.laps || [];
-        const latestLap = laps.length > 0 ? laps[laps.length - 1] : null;
-
-        let lapDisplayHtml = '';
-        if (latestLap) {
-          lapDisplayHtml = `
-            <div class="flex justify-between items-center text-[9px] font-mono leading-none font-bold">
-              <span class="text-blue-600">P${laps.length}</span>
-              <span class="text-blue-600">L:${latestLap.lapTime}</span>
-              <span class="text-slate-800">S:${latestLap.splitTime}</span>
-            </div>
-          `;
-        } else {
-          lapDisplayHtml = `<div class="text-[8px] text-slate-300 text-center leading-none">記録なし</div>`;
+        let card = app.querySelector(`[data-id="${id}"]`);
+        if (!card) {
+          card = document.createElement('div');
+          card.setAttribute('data-id', id);
+          app.appendChild(card);
         }
 
+        const isSelected = selectedIds.has(id);
+        const laps = sw.laps || [];
+        const lastLap = laps.length > 0 ? laps[laps.length - 1].lapTime : '00:00.00';
+        const lastSplit = laps.length > 0 ? laps[laps.length - 1].splitTime : '00:00.00';
+
+        card.className = `bg-white rounded-xl shadow-sm border ${
+          isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
+        } p-2 flex flex-col justify-between relative transition-all`;
+
         card.innerHTML = `
-          <!-- ヘッダー -->
-          <div class="flex items-center justify-between gap-1 border-b border-slate-100 pb-0.5 h-[18px] shrink-0">
+          <div class="flex items-center justify-between gap-1 mb-1">
             <div class="flex items-center gap-1 flex-1 min-w-0">
-              <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3 h-3 text-blue-600 rounded">
-              <input type="text" value="${sw.name || ''}" onchange="updateName('${id}', this.value)" class="font-bold text-[11px] bg-transparent border-b border-transparent focus:border-blue-500 w-full truncate leading-none">
+              <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 flex-shrink-0 cursor-pointer">
+              <input type="text" value="${escapeHtml(sw.name)}" onchange="updateName('${id}', this.value)" class="w-full font-bold px-1.5 py-0.5 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 bg-slate-50">
             </div>
-            <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5">✕</button>
+            <button onclick="deleteTimer('${id}')" title="削除" class="text-slate-400 hover:text-rose-600 px-1 text-xs transition">✕</button>
           </div>
 
-          <!-- タイム表示 (mm:ss.00) -->
-          <div class="text-center h-[20px] shrink-0 flex items-center justify-center">
-            <div id="time-${id}" class="text-lg font-black font-mono tracking-tight text-slate-800 leading-none">
-              ${formatTime(getElapsedTime(sw))}
-            </div>
+          <div class="text-center py-1 bg-slate-900 text-emerald-400 font-mono text-xl font-bold rounded-lg my-1 shadow-inner tracking-wider" id="time_${id}">
+            ${formatTime(getElapsedTime(sw))}
           </div>
 
-          <!-- ボタン -->
-          <div class="grid grid-cols-3 gap-1 h-[18px] shrink-0">
-            <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500' : 'bg-emerald-500'} text-white font-bold rounded text-[9px] leading-none">
+          <div class="bg-slate-50 rounded p-1 my-1 border border-slate-100 text-[10px] font-mono grid grid-cols-2 gap-1 text-slate-600">
+            <div class="truncate">LAP: <span id="lap_${id}" class="font-bold text-slate-800">${lastLap}</span></div>
+            <div class="truncate">SPLIT: <span id="split_${id}" class="font-bold text-slate-800">${lastSplit}</span></div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-1 mt-1">
+            <button onclick="toggleStartWithSound('${id}')" class="py-1.5 px-0.5 font-bold rounded-lg text-[10px] sm:text-xs text-white shadow-sm transition active:scale-95 ${
+              sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'
+            }">
               ${sw.isRunning ? 'STOP' : 'START'}
             </button>
-            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="bg-blue-500 disabled:opacity-40 text-white font-bold rounded text-[9px] leading-none">
+            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-1.5 px-0.5 font-bold rounded-lg text-[10px] sm:text-xs text-slate-700 bg-slate-200 hover:bg-slate-300 shadow-sm transition active:scale-95 ${
+              !sw.isRunning ? 'opacity-50 cursor-not-allowed' : ''
+            }">
               LAP
             </button>
-            <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="bg-slate-500 disabled:opacity-40 text-white font-bold rounded text-[9px] leading-none">
+            <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="py-1.5 px-0.5 font-bold rounded-lg text-[10px] sm:text-xs text-amber-800 bg-amber-100 hover:bg-amber-200 shadow-sm transition active:scale-95 ${
+              sw.isRunning ? 'opacity-50 cursor-not-allowed' : ''
+            }">
               RESET
             </button>
-          </div>
-
-          <!-- カード内のLAP/SPLIT表示 -->
-          <div class="bg-slate-50 rounded border border-slate-100 px-1 py-0.5 shrink-0 flex items-center justify-center h-[18px]">
-            <div class="w-full">
-              ${lapDisplayHtml}
-            </div>
           </div>
         `;
       });
     }
 
-    function updateDisplays() {
+    // 画面のリアルタイム表示更新（ミリ秒描画）
+    function updateDisplayLoop() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
-        const timeEl = document.getElementById(`time-${id}`);
-        if (timeEl && sw && sw.isRunning) {
+        if (!sw) return;
+
+        const timeEl = document.getElementById(`time_${id}`);
+        if (timeEl) {
           timeEl.innerText = formatTime(getElapsedTime(sw));
         }
+
+        const lapEl = document.getElementById(`lap_${id}`);
+        const splitEl = document.getElementById(`split_${id}`);
+        const laps = sw.laps || [];
+
+        if (laps.length > 0) {
+          const last = laps[laps.length - 1];
+          if (lapEl) lapEl.innerText = last.lapTime;
+          if (splitEl) splitEl.innerText = last.splitTime;
+        } else {
+          if (lapEl) lapEl.innerText = '00:00.00';
+          if (splitEl) splitEl.innerText = '00:00.00';
+        }
       });
-      requestAnimationFrame(updateDisplays);
+      requestAnimationFrame(updateDisplayLoop);
     }
-    requestAnimationFrame(updateDisplays);
+
+    // 更新ループスタート
+    requestAnimationFrame(updateDisplayLoop);
   </script>
 </body>
 </html>
