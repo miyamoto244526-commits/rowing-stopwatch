@@ -6,19 +6,17 @@
   <title>Rowing マルチストップウォッチ ver2</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- PeerJS for P2P Realtime Sync -->
+  <!-- PeerJS (P2P同期) -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <!-- SheetJS for Excel Export -->
+  <!-- SheetJS (Excel書き出し) -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-  <!-- html2canvas for Image Generation -->
+  <!-- html2canvas (画像キャプチャ) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     button, input, label, select {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    .no-scrollbar::-webkit-scrollbar { display: none; }
-    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen pb-10 text-slate-800 antialiased selection:bg-blue-200">
@@ -103,6 +101,9 @@
           <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
             URLコピー
           </button>
+          <button onclick="shareLineUrl()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold px-1.5 py-0.5 rounded text-[10px] transition flex items-center gap-1">
+            <span>LINEでURL共有</span>
+          </button>
           <button onclick="resetAllTimersWithSound()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
             全体リセット
           </button>
@@ -138,11 +139,11 @@
     <div id="previewModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2">
       <div class="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
         <div class="p-3 bg-slate-800 text-white flex items-center justify-between">
-          <h3 class="font-bold text-sm">計測データプレビュー (SPLIT)</h3>
+          <h3 class="font-bold text-sm">計測データプレビュー (SPLITのみ)</h3>
           <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1">✕</button>
         </div>
-        <div class="p-3 overflow-auto flex-1 bg-slate-50 flex justify-center items-start">
-          <div id="previewTableContainer" class="bg-white rounded p-3 border border-slate-200 inline-block"></div>
+        <div class="p-3 overflow-auto flex-1 bg-slate-100 flex justify-center items-start">
+          <div id="previewTableContainer" class="inline-block"></div>
         </div>
         <div class="p-2.5 bg-white border-t border-slate-200 flex justify-end items-center text-xs gap-1.5 flex-wrap">
           <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-1.5 rounded flex items-center gap-1">
@@ -279,7 +280,7 @@
       selectedIds.clear();
       renderStructure();
 
-      hostPeerId = `rowing-app-room-v23-${roomCode}`;
+      hostPeerId = `rowing-app-room-v24-${roomCode}`;
       
       setTimeout(() => {
         initP2P();
@@ -665,7 +666,14 @@
       });
     };
 
-    // 出力・プレビューデータ生成（SPLIT行のみ出力）
+    window.shareLineUrl = () => {
+      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
+      const msg = `【Rowingストップウォッチ】共有ID: ${roomCode}\n${shareUrl}`;
+      const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(msg)}`;
+      window.open(lineUrl, '_blank');
+    };
+
+    // 出力・プレビューデータ生成（SPLITのみ）
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -706,7 +714,7 @@
             const val = row[colIdx] ? String(row[colIdx]) : '';
             if (val.length > maxLen) maxLen = val.length;
           });
-          return { wch: Math.max(maxLen + 2, 5) };
+          return { wch: Math.max(maxLen + 2, 6) };
         });
         ws['!cols'] = colWidths;
       }
@@ -723,24 +731,25 @@
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    // プレビュー画面のHTML生成（SPLIT行のみ表示）
+    // プレビュー表示用HTML生成（完全に固定インラインスタイル適用）
     function renderPreviewTableHtml() {
       const aoa = generateExportData();
-      let tableHtml = `<div class="p-2 bg-white rounded shadow-sm inline-block"><h2 class="text-xs font-bold text-slate-800 mb-1.5">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
-      tableHtml += `<table class="table-auto text-[11px] text-center border-collapse border border-slate-300"><thead><tr class="bg-slate-200 font-bold border-b border-slate-300">`;
+      let tableHtml = `<div id="captureTarget" style="background-color: #ffffff; color: #000000; padding: 16px; border-radius: 8px; border: 1px solid #cbd5e1; display: inline-block;">`;
+      tableHtml += `<h2 style="font-size: 14px; font-weight: bold; color: #0f172a; margin-bottom: 10px; font-family: sans-serif;">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
+      tableHtml += `<table style="border-collapse: collapse; font-size: 11px; text-align: center; background-color: #ffffff; font-family: sans-serif;"><thead><tr style="background-color: #e2e8f0; font-weight: bold;">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th class="px-1.5 py-0.5 border border-slate-300 text-slate-800 whitespace-nowrap">${col}</th>`;
+        tableHtml += `<th style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap;">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
       for (let i = 1; i < aoa.length; i++) {
         const row = aoa[i];
-        const bgClass = i % 2 === 0 ? 'bg-slate-50 font-medium text-slate-700' : 'bg-white font-bold text-slate-800';
-        tableHtml += `<tr class="${bgClass} border-b border-slate-200">`;
+        const bgColor = i % 2 === 0 ? '#f8fafc' : '#ffffff';
+        tableHtml += `<tr style="background-color: ${bgColor};">`;
         row.forEach((cell, cellIdx) => {
-          const fontClass = cellIdx >= 2 ? 'font-mono' : 'font-bold';
-          const alignClass = cellIdx === 0 ? 'text-left px-1.5 py-0.5' : 'text-center px-1 py-0.5';
-          tableHtml += `<td class="${alignClass} border border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
+          const fontStyle = cellIdx >= 2 ? 'font-family: monospace; font-weight: bold;' : 'font-weight: bold;';
+          const alignStyle = cellIdx === 0 ? 'text-align: left;' : 'text-align: center;';
+          tableHtml += `<td style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; ${alignStyle} ${fontStyle}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
       }
@@ -760,43 +769,27 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    // LINE画像転送処理（画面外に要素を複製して白飛びを防止）
+    // 画面上の表示ターゲットをそのまま高精度キャプチャして画像共有
     window.sendToLine = async () => {
-      const container = document.getElementById('previewTableContainer');
-      if (!container || !container.firstElementChild) return alert("表示するデータがありません");
+      const target = document.getElementById('captureTarget');
+      if (!target) return alert("表示するデータがありません");
 
       showToast("画像を生成中...");
 
-      // 白飛び防止：画面外の一時領域に複製してレンダリング
-      const tempWrapper = document.createElement('div');
-      tempWrapper.style.position = 'absolute';
-      tempWrapper.style.left = '-9999px';
-      tempWrapper.style.top = '0';
-      tempWrapper.style.backgroundColor = '#ffffff';
-      tempWrapper.style.padding = '12px';
-
-      const clone = container.firstElementChild.cloneNode(true);
-      tempWrapper.appendChild(clone);
-      document.body.appendChild(tempWrapper);
-
       try {
-        await new Promise(resolve => setTimeout(resolve, 50));
-
-        const canvas = await html2canvas(tempWrapper, {
+        const canvas = await html2canvas(target, {
           scale: 2,
           backgroundColor: '#ffffff',
           useCORS: true,
           logging: false
         });
 
-        document.body.removeChild(tempWrapper);
-
         canvas.toBlob(async (blob) => {
           if (!blob) return alert("画像の生成に失敗しました");
 
           const file = new File([blob], `RowingResult_${Date.now()}.png`, { type: 'image/png' });
 
-          // Web Share API（スマホ等の画像共有メニュー呼び出し）
+          // OS標準共有機能（スマホのLINE直接共有対応）
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
               await navigator.share({
@@ -810,20 +803,20 @@
             }
           }
 
-          // 非対応ブラウザ用のフォールバック（自動保存 + LINEアプリ呼び出し）
+          // PC等でのフォールバック
           const link = document.createElement('a');
           link.download = `RowingResult_${Date.now()}.png`;
           link.href = canvas.toDataURL('image/png');
           link.click();
 
-          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像を保存しました。')}`;
+          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像をダウンロード保存しました。')}`;
           window.open(lineUrl, '_blank');
           showToast("画像を保存しました。LINEへ遷移します。");
         }, 'image/png');
 
       } catch (e) {
-        if (tempWrapper.parentNode) document.body.removeChild(tempWrapper);
-        alert("画像転送処理でエラーが発生しました。");
+        console.error(e);
+        alert("画像生成処理でエラーが発生しました。");
       }
     };
 
@@ -903,7 +896,7 @@
             </button>
           </div>
 
-          <!-- 最新LAP / SPLIT表示（カード上） -->
+          <!-- カード内のLAP/SPLIT表示 -->
           <div class="bg-slate-50 rounded border border-slate-100 px-1 py-0.5 shrink-0 flex items-center justify-center h-[18px]">
             <div class="w-full">
               ${lapDisplayHtml}
