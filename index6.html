@@ -257,18 +257,41 @@
       document.getElementById('joinModal').classList.remove('hidden');
     }
 
+    // P2P通信のクリーンアップ処理
+    function cleanupP2P() {
+      if (hostConn) {
+        try { hostConn.close(); } catch (e) {}
+        hostConn = null;
+      }
+      clientConns.forEach(conn => {
+        try { conn.close(); } catch (e) {}
+      });
+      clientConns = [];
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+      }
+      isHost = false;
+    }
+
     function startAppWithRoom(code) {
       roomCode = code;
       location.hash = roomCode;
       document.getElementById('roomCodeDisplay').innerText = roomCode;
       document.getElementById('joinModal').classList.add('hidden');
 
-      if (peer) {
-        try { peer.destroy(); } catch (e) {}
-      }
+      // 既存接続・状態のリセット
+      cleanupP2P();
+      state = { stopwatches: {} };
+      selectedIds.clear();
+      renderStructure();
 
-      hostPeerId = `rowing-app-room-v22-${roomCode}`;
-      initP2P();
+      hostPeerId = `rowing-app-room-v23-${roomCode}`;
+      
+      // PeerJSサーバー側の接続リセット待ち(200ms)
+      setTimeout(() => {
+        initP2P();
+      }, 200);
     }
 
     function getNow() {
@@ -310,6 +333,10 @@
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
+            // 他の端末がすでにホストとして存在する場合はクライアントとして参加
+            if (peer) {
+              try { peer.destroy(); } catch(e){}
+            }
             peer = new Peer(peerConfig);
             peer.on('open', () => connectToHost());
           } else {
@@ -791,7 +818,6 @@
         if (!existingCards.has(id)) {
           const card = document.createElement('div');
           card.setAttribute('data-id', id);
-          // 縦幅を最小限の92pxに固定
           card.className = "h-[92px] min-h-[92px] max-h-[92px] bg-white rounded-lg shadow-sm border border-slate-200 p-1.5 flex flex-col justify-between relative overflow-hidden";
           app.appendChild(card);
         }
