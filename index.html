@@ -793,14 +793,14 @@
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    // プレビュー表示用HTML生成（インラインスタイル固定・垂直中央揃え対応）
+    // プレビュー表示用HTML生成（html2canvasで文字が下寄せにならないよう明確な中央揃えスタイルを付与）
     function renderPreviewTableHtml() {
       const aoa = generateExportData();
       let tableHtml = `<div id="captureTarget" style="background-color: #ffffff; color: #000000; padding: 16px; border-radius: 8px; border: 1px solid #cbd5e1; display: inline-block;">`;
-      tableHtml += `<h2 style="font-size: 14px; font-weight: bold; color: #0f172a; margin-bottom: 10px; font-family: sans-serif;">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
-      tableHtml += `<table style="border-collapse: collapse; font-size: 11px; text-align: center; background-color: #ffffff; font-family: sans-serif;"><thead><tr style="background-color: #e2e8f0; font-weight: bold;">`;
+      tableHtml += `<h2 style="font-size: 14px; font-weight: bold; color: #0f172a; margin-bottom: 10px; font-family: sans-serif; text-align: left;">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
+      tableHtml += `<table style="border-collapse: collapse; font-size: 11px; text-align: center; background-color: #ffffff; font-family: sans-serif; table-layout: auto;"><thead><tr style="background-color: #e2e8f0; font-weight: bold;">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; line-height: 1.2;">${col}</th>`;
+        tableHtml += `<th style="padding: 0 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; height: 32px; box-sizing: border-box; line-height: 1.2;">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
@@ -811,7 +811,7 @@
         row.forEach((cell, cellIdx) => {
           const fontStyle = cellIdx >= 2 ? 'font-family: monospace; font-weight: bold;' : 'font-weight: bold;';
           const alignStyle = cellIdx === 0 ? 'text-align: left;' : 'text-align: center;';
-          tableHtml += `<td style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; line-height: 1.2; ${alignStyle} ${fontStyle}">${cell || ''}</td>`;
+          tableHtml += `<td style="padding: 0 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; height: 32px; box-sizing: border-box; line-height: 1.2; ${alignStyle} ${fontStyle}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
       }
@@ -903,6 +903,7 @@
 
         const isSelected = selectedIds.has(id);
         const laps = sw.laps || [];
+        const pNumText = laps.length > 0 ? `P${laps.length}` : 'P0';
         const lastLap = laps.length > 0 ? laps[laps.length - 1].lapTime : '00:00.00';
         const lastSplit = laps.length > 0 ? laps[laps.length - 1].splitTime : '00:00.00';
 
@@ -923,9 +924,15 @@
             ${formatTime(getElapsedTime(sw))}
           </div>
 
-          <div class="bg-slate-50 rounded p-1 my-1 border border-slate-100 text-[10px] font-mono grid grid-cols-2 gap-1 text-slate-600">
-            <div class="truncate">LAP: <span id="lap_${id}" class="font-bold text-slate-800">${lastLap}</span></div>
-            <div class="truncate">SPLIT: <span id="split_${id}" class="font-bold text-slate-800">${lastSplit}</span></div>
+          <!-- P地点番号・LAP/SPLIT表示領域 -->
+          <div class="bg-slate-50 rounded p-1 my-1 border border-slate-100 text-[10px] font-mono flex items-center gap-1.5 text-slate-600">
+            <span id="pnum_${id}" class="font-black text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded text-[10px] shrink-0 leading-none">
+              ${pNumText}
+            </span>
+            <div class="flex-1 grid grid-cols-2 gap-1 min-w-0">
+              <div class="truncate">LAP: <span id="lap_${id}" class="font-bold text-slate-800">${lastLap}</span></div>
+              <div class="truncate">SPLIT: <span id="split_${id}" class="font-bold text-slate-800">${lastSplit}</span></div>
+            </div>
           </div>
 
           <div class="grid grid-cols-3 gap-1 mt-1">
@@ -960,9 +967,14 @@
           timeEl.innerText = formatTime(getElapsedTime(sw));
         }
 
+        const pnumEl = document.getElementById(`pnum_${id}`);
         const lapEl = document.getElementById(`lap_${id}`);
         const splitEl = document.getElementById(`split_${id}`);
         const laps = sw.laps || [];
+
+        if (pnumEl) {
+          pnumEl.innerText = laps.length > 0 ? `P${laps.length}` : 'P0';
+        }
 
         if (laps.length > 0) {
           const last = laps[laps.length - 1];
