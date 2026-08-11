@@ -3,25 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ</title>
+  <title>Rowing マルチストップウォッチ ver2</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PeerJS for P2P Realtime Sync -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <!-- SheetJS for Excel & CSV Export -->
+  <!-- SheetJS for Excel Export -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <!-- html2canvas for Image Generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     button, input, label, select {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    .no-scrollbar::-webkit-scrollbar {
-      display: none;
-    }
-    .no-scrollbar {
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen pb-10 text-slate-800 antialiased selection:bg-blue-200">
@@ -31,17 +28,17 @@
     <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-5">
       <div class="text-center">
         <h2 class="text-xl font-black text-slate-800 tracking-wide">Rowing マルチストップウォッチ</h2>
-        <p class="text-xs text-slate-500 mt-1">共有IDを入力して同期ルームに入室するか、新規作成してください</p>
+        <p class="text-xs text-slate-500 mt-1">半角英数字で共有IDを入力してください</p>
       </div>
 
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-bold text-slate-700 mb-1">共有ID（ルーム名）</label>
-          <input type="text" id="roomInput" placeholder="例: tsuruga-2026" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <label class="block text-xs font-bold text-slate-700 mb-1">共有ID（任意英数字）</label>
+          <input type="text" id="roomInput" placeholder="例: rowing2026" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
         </div>
 
         <button onclick="submitJoin()" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-2.5 rounded-xl shadow-md transition active:scale-[0.98] text-sm">
-          入室 / 接続開始
+          入室 / 同期開始
         </button>
 
         <div class="relative flex py-1 items-center">
@@ -62,7 +59,7 @@
     <!-- ヘッダー・操作コントロールバー -->
     <header class="bg-white/95 backdrop-blur-md p-2 rounded-xl shadow-md border border-slate-200/80 mb-2 sticky top-1 z-30">
       
-      <!-- 上段：ステータス・共有ID・全選択・選択START・選択STOP・艇数・補助操作 -->
+      <!-- 上段：ステータス・共有ID・選択一括操作・艇数 -->
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-1.5 mb-1.5 text-xs">
         <div class="flex items-center gap-2 flex-wrap">
           <!-- 接続ステータス -->
@@ -85,13 +82,11 @@
 
           <!-- 選択START -->
           <button onclick="batchStartWithSound()" class="bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
-            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
             選択START
           </button>
 
           <!-- 選択STOP -->
           <button onclick="batchStopWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95 text-[10px]">
-            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
             選択STOP
           </button>
 
@@ -105,107 +100,61 @@
           <button onclick="reopenJoinModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
             ID変更
           </button>
-          <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition active:scale-95">
+          <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
             URLコピー
           </button>
-          <button onclick="resetAllTimersWithSound()" class="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition active:scale-95">
+          <button onclick="resetAllTimersWithSound()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
             全体リセット
           </button>
         </div>
       </div>
 
-      <!-- 下段：メイン操作ボタン群 -->
+      <!-- 下段：操作・出力ボタン群 -->
       <div class="flex flex-wrap items-center justify-start gap-1 text-[11px]">
-        <!-- 全体STOP -->
-        <button onclick="stopAllTimersWithSound()" class="bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
+        <button onclick="stopAllTimersWithSound()" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-2 py-1 rounded shadow-sm">
           全体STOP
         </button>
-
-        <!-- 追加 -->
-        <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-          追加
+        <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded shadow-sm">
+          ＋ 追加
         </button>
-
-        <!-- 削除 -->
-        <button onclick="removeTimer()" class="bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
-          削除
+        <button onclick="removeTimer()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold px-2 py-1 rounded shadow-sm">
+          － 削除
         </button>
-
-        <!-- 画面で結果表示 -->
-        <button onclick="openPreviewModal()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+        <button onclick="openPreviewModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1 rounded shadow-sm">
           データ表示
         </button>
-
-        <!-- エクセル出力 -->
-        <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
+        <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2 py-1 rounded shadow-sm">
           Excel出力
-        </button>
-
-        <!-- CSV出力 -->
-        <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
-          CSV出力
-        </button>
-
-        <!-- LINE転送 -->
-        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] active:bg-[#049b42] text-white font-bold px-2 py-1 rounded shadow-sm flex items-center gap-0.5 transition active:scale-95">
-          <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M24 10.304c0-5.369-5.383-9.738-12-9.738-6.616 0-12 4.369-12 9.738 0 4.814 4.269 8.846 10.036 9.608.391.084.922.258 1.057.592.122.303.079.778.039 1.085l-.171 1.027c-.053.303-.242 1.186 1.039.647 1.281-.54 6.911-4.069 9.428-6.967 1.739-1.907 2.572-3.844 2.572-6.002z"/></svg>
-          LINE転送
         </button>
       </div>
     </header>
 
     <!-- 通知トースト -->
-    <div id="toast" class="fixed bottom-4 right-4 bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-2xl text-xs font-bold transition-all transform translate-y-20 opacity-0 z-50 flex items-center gap-2 border border-slate-700">
-      <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-      <span id="toastMsg">URLをコピーしました！</span>
+    <div id="toast" class="fixed bottom-4 right-4 bg-slate-900 text-white px-3.5 py-2 rounded-xl shadow-2xl text-xs font-bold transition-all transform translate-y-20 opacity-0 z-50 border border-slate-700">
+      <span id="toastMsg">通知メッセージ</span>
     </div>
 
-    <!-- 画面上での結果表示用モーダル -->
-    <div id="previewModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+    <!-- 結果表示プレビューモーダル -->
+    <div id="previewModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2">
       <div class="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-        
-        <!-- モーダルヘッダー -->
-        <div class="p-3 bg-slate-800 text-white flex items-center justify-between border-b border-slate-700">
-          <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-            <h3 class="font-bold text-sm">計測データプレビュー (SPLITのみ)</h3>
-          </div>
-          <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1 rounded-lg transition">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        <div class="p-3 bg-slate-800 text-white flex items-center justify-between">
+          <h3 class="font-bold text-sm">計測データプレビュー (SPLIT)</h3>
+          <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1">✕</button>
+        </div>
+        <div class="p-3 overflow-auto flex-1 bg-slate-50 flex justify-center items-start">
+          <div id="previewTableContainer" class="bg-white rounded p-3 border border-slate-200 inline-block"></div>
+        </div>
+        <div class="p-2.5 bg-white border-t border-slate-200 flex justify-end items-center text-xs gap-1.5 flex-wrap">
+          <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-1.5 rounded flex items-center gap-1">
+            Excel保存
+          </button>
+          <button onclick="sendToLine()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold px-3 py-1.5 rounded flex items-center gap-1 shadow-sm">
+            <span>LINE画像転送</span>
+          </button>
+          <button onclick="closePreviewModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded">
+            閉じる
           </button>
         </div>
-
-        <!-- テーブル表示領域 -->
-        <div class="p-3 overflow-auto flex-1 bg-slate-50">
-          <div id="previewTableContainer" class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto"></div>
-        </div>
-
-        <!-- モーダルフッター -->
-        <div class="p-2.5 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-          <button onclick="copyTableToClipboard()" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1 transition active:scale-95">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
-            クリップボードにコピー
-          </button>
-
-          <div class="flex items-center gap-1.5">
-            <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2.5 py-1.5 rounded-lg shadow-sm">
-              Excel保存
-            </button>
-            <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 text-white font-bold px-2.5 py-1.5 rounded-lg shadow-sm">
-              CSV保存
-            </button>
-            <button onclick="closePreviewModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg">
-              閉じる
-            </button>
-          </div>
-        </div>
-
       </div>
     </div>
 
@@ -227,7 +176,7 @@
     let lastSyncServerTime = Date.now();
     let lastSyncLocalTime = Date.now();
 
-    // 音声効果
+    // 音声処理
     let audioCtx = null;
     function initAudio() {
       if (!audioCtx) {
@@ -251,9 +200,7 @@
         gain.connect(audioCtx.destination);
         osc.start();
         osc.stop(audioCtx.currentTime + duration);
-      } catch (e) {
-        console.warn('Audio playback error:', e);
-      }
+      } catch (e) {}
     }
 
     function batchStartWithSound() { playBeep(1046.50, 'sine', 0.15); batchStart(); }
@@ -277,13 +224,11 @@
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' }
         ]
       }
     };
 
-    // 画面ロード時処理
     window.addEventListener('DOMContentLoaded', () => {
       const urlHash = location.hash.replace('#', '').trim();
       if (urlHash) {
@@ -292,13 +237,13 @@
     });
 
     function submitJoin() {
-      const code = document.getElementById('roomInput').value.trim();
-      if (!code) return alert('共有IDを入力してください');
+      const code = document.getElementById('roomInput').value.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!code) return alert('共有IDを英数字で入力してください');
       startAppWithRoom(code);
     }
 
     function createNewRoom() {
-      const code = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
+      const code = 'rowing' + Math.floor(1000 + Math.random() * 9000);
       document.getElementById('roomInput').value = code;
       startAppWithRoom(code);
     }
@@ -307,18 +252,38 @@
       document.getElementById('joinModal').classList.remove('hidden');
     }
 
+    function cleanupP2P() {
+      if (hostConn) {
+        try { hostConn.close(); } catch (e) {}
+        hostConn = null;
+      }
+      clientConns.forEach(conn => {
+        try { conn.close(); } catch (e) {}
+      });
+      clientConns = [];
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+        peer = null;
+      }
+      isHost = false;
+    }
+
     function startAppWithRoom(code) {
       roomCode = code;
       location.hash = roomCode;
       document.getElementById('roomCodeDisplay').innerText = roomCode;
       document.getElementById('joinModal').classList.add('hidden');
 
-      if (peer) {
-        try { peer.destroy(); } catch (e) {}
-      }
+      cleanupP2P();
+      state = { stopwatches: {} };
+      selectedIds.clear();
+      renderStructure();
 
-      hostPeerId = `rowing-app-room-v21-${roomCode}`;
-      initP2P();
+      hostPeerId = `rowing-app-room-v23-${roomCode}`;
+      
+      setTimeout(() => {
+        initP2P();
+      }, 200);
     }
 
     function getNow() {
@@ -355,22 +320,17 @@
             clientConns = clientConns.filter(c => c !== conn && c.open);
             updateHostStatus();
           });
-          conn.on('error', () => {
-            clientConns = clientConns.filter(c => c !== conn && c.open);
-            updateHostStatus();
-          });
         });
 
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
+            if (peer) {
+              try { peer.destroy(); } catch(e){}
+            }
             peer = new Peer(peerConfig);
             peer.on('open', () => connectToHost());
-            peer.on('disconnected', () => {
-              if (peer && !peer.destroyed) peer.reconnect();
-            });
           } else {
-            console.error('Peer error:', err);
             updateStatus('通信エラー', 'bg-rose-100 text-rose-800 border-rose-300');
           }
         });
@@ -380,7 +340,7 @@
     }
 
     function connectToHost() {
-      updateStatus('ホストへ接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
+      updateStatus('ホスト接続中...', 'bg-amber-100 text-amber-800 border-amber-300');
       hostConn = peer.connect(hostPeerId, { reliable: true });
 
       hostConn.on('open', () => {
@@ -401,47 +361,15 @@
       });
 
       hostConn.on('close', () => {
-        updateStatus('切断 (再接続中...)', 'bg-rose-100 text-rose-800 border-rose-300');
-        setTimeout(connectToHost, 3000);
-      });
-
-      hostConn.on('error', () => {
-        updateStatus('接続失敗', 'bg-rose-100 text-rose-800 border-rose-300');
+        updateStatus('切断', 'bg-rose-100 text-rose-800 border-rose-300');
         setTimeout(connectToHost, 3000);
       });
     }
 
-    setInterval(() => {
-      if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
-      if (isHost) {
-        clientConns = clientConns.filter(c => c && c.open);
-        clientConns.forEach(conn => {
-          try {
-            conn.send({ type: 'PING' });
-          } catch (e) {
-            clientConns = clientConns.filter(c => c !== conn);
-          }
-        });
-        updateHostStatus();
-      } else if (hostConn && hostConn.open) {
-        hostConn.send({ type: 'PING' });
-      }
-    }, 5000);
-
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
-        if (!isHost) {
-          if (!hostConn || !hostConn.open) connectToHost();
-          else hostConn.send({ type: 'REQUEST_SYNC' });
-        }
-      }
-    });
-
     function updateHostStatus() {
       if (isHost) {
         const activePeers = new Set(clientConns.filter(c => c && c.open).map(c => c.peer));
-        updateStatus(`ホスト (接続端末: ${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
+        updateStatus(`ホスト (接続:${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
@@ -664,21 +592,21 @@
     window.resetTimer = (id) => dispatchAction({ type: 'RESET', id });
     window.stopAllTimers = () => dispatchAction({ type: 'STOP_ALL' });
     window.resetAllTimers = () => {
-      if (confirm("停止中のストップウォッチをリセットしますか？（計測中の艇は維持されます）")) dispatchAction({ type: 'RESET_ALL' });
+      if (confirm("停止中のストップウォッチをリセットしますか？")) dispatchAction({ type: 'RESET_ALL' });
     };
     window.toggleStart = (id) => dispatchAction({ type: 'TOGGLE_START', id });
     window.addLap = (id) => dispatchAction({ type: 'ADD_LAP', id });
     window.updateName = (id, name) => dispatchAction({ type: 'UPDATE_NAME', id, name });
     window.batchStart = () => {
-      if (selectedIds.size === 0) return alert("対象艇にチェックを入れて選択してください");
+      if (selectedIds.size === 0) return alert("対象艇を選択してください");
       dispatchAction({ type: 'BATCH_START', ids: Array.from(selectedIds) });
     };
     window.batchStop = () => {
-      if (selectedIds.size === 0) return alert("対象艇にチェックを入れて選択してください");
+      if (selectedIds.size === 0) return alert("対象艇を選択してください");
       dispatchAction({ type: 'BATCH_STOP', ids: Array.from(selectedIds) });
     };
 
-    // mm:ss.00 形式のミリ秒フォーマット関数
+    // mm:ss.00 フォーマット
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -737,12 +665,7 @@
       });
     };
 
-    window.shareLine = () => {
-      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      const msg = `【Rowingマルチストップウォッチ】\nリアルタイム計測ルーム(ID: ${roomCode})に参加してください：\n${shareUrl}`;
-      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
-    };
-
+    // 出力データ生成（SPLIT行のみ出力するように変更）
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -750,7 +673,7 @@
         if (lCount > maxLaps) maxLaps = lCount;
       });
 
-      const header = ['艇名', '種別'];
+      const header = ['艇名', '項目'];
       for (let i = 1; i <= maxLaps; i++) {
         header.push(`P${i}`);
       }
@@ -761,8 +684,8 @@
         const splitRow = [sw.name, 'SPLIT'];
 
         if (laps.length === 0) {
-          const current = formatTime(getElapsedTime(sw));
-          splitRow.push(current);
+          const cur = formatTime(getElapsedTime(sw));
+          splitRow.push(cur);
         } else {
           laps.forEach(lap => {
             splitRow.push(lap.splitTime);
@@ -774,37 +697,16 @@
       return aoa;
     }
 
-    function createOptimizedWorksheet(aoa, isCsv = false) {
-      const processedAoa = aoa.map((row, rIdx) => {
-        if (rIdx === 0) return row;
-        return row.map((cell, cIdx) => {
-          if (cIdx >= 2 && typeof cell === 'string' && cell.match(/^\d{2}:\d{2}\.\d{2}$/)) {
-            return isCsv ? `="${cell}"` : cell;
-          }
-          return cell;
-        });
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(processedAoa, { raw: true });
-      
-      Object.keys(ws).forEach(key => {
-        if (key[0] !== '!') {
-          ws[key].t = 's';
-        }
-      });
-
-      if (processedAoa.length > 0) {
-        const colWidths = processedAoa[0].map((_, colIdx) => {
+    function createOptimizedWorksheet(aoa) {
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      if (aoa.length > 0) {
+        const colWidths = aoa[0].map((_, colIdx) => {
           let maxLen = 0;
-          processedAoa.forEach(row => {
-            const val = row[colIdx] ? String(row[colIdx]).replace(/^="|"$/g, '') : '';
-            let len = 0;
-            for (let i = 0; i < val.length; i++) {
-              len += val.charCodeAt(i) > 255 ? 2 : 1;
-            }
-            if (len > maxLen) maxLen = len;
+          aoa.forEach(row => {
+            const val = row[colIdx] ? String(row[colIdx]) : '';
+            if (val.length > maxLen) maxLen = val.length;
           });
-          return { wch: Math.max(maxLen + 3, 6) };
+          return { wch: Math.max(maxLen + 2, 5) };
         });
         ws['!cols'] = colWidths;
       }
@@ -815,52 +717,42 @@
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, false);
+      const ws = createOptimizedWorksheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Result");
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    window.exportCsv = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
+    // プレビュー画面のHTML生成（SPLIT行のみ表示）
+    function renderPreviewTableHtml() {
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, true);
-      const csv = XLSX.utils.sheet_to_csv(ws);
-      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = getDefaultFileName('csv');
-      a.click();
-      URL.revokeObjectURL(url);
-    };
-
-    window.openPreviewModal = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("表示するデータがありません");
-
-      const aoa = generateExportData();
-      const container = document.getElementById('previewTableContainer');
-
-      let tableHtml = `<table class="w-auto text-xs text-left border-collapse"><thead><tr class="bg-slate-100 text-slate-700 font-bold border-b border-slate-300">`;
+      let tableHtml = `<div class="p-2 bg-white rounded shadow-sm inline-block"><h2 class="text-xs font-bold text-slate-800 mb-1.5">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
+      tableHtml += `<table class="table-auto text-[11px] text-center border-collapse border border-slate-300"><thead><tr class="bg-slate-200 font-bold border-b border-slate-300">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th class="p-2 border-r border-slate-200 whitespace-nowrap min-w-[50px]">${col}</th>`;
+        tableHtml += `<th class="px-1.5 py-0.5 border border-slate-300 text-slate-800 whitespace-nowrap">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
       for (let i = 1; i < aoa.length; i++) {
         const row = aoa[i];
-        tableHtml += `<tr class="bg-white border-b border-slate-200 hover:bg-blue-50/50">`;
+        const bgClass = i % 2 === 0 ? 'bg-slate-50 font-medium text-slate-700' : 'bg-white font-bold text-slate-800';
+        tableHtml += `<tr class="${bgClass} border-b border-slate-200">`;
         row.forEach((cell, cellIdx) => {
           const fontClass = cellIdx >= 2 ? 'font-mono' : 'font-bold';
-          tableHtml += `<td class="p-2 border-r border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
+          const alignClass = cellIdx === 0 ? 'text-left px-1.5 py-0.5' : 'text-center px-1 py-0.5';
+          tableHtml += `<td class="${alignClass} border border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
       }
-      tableHtml += `</tbody></table>`;
+      tableHtml += `</tbody></table></div>`;
+      return tableHtml;
+    }
 
-      container.innerHTML = tableHtml;
+    window.openPreviewModal = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("表示するデータがありません");
+      const container = document.getElementById('previewTableContainer');
+      container.innerHTML = renderPreviewTableHtml();
       document.getElementById('previewModal').classList.remove('hidden');
     };
 
@@ -868,14 +760,48 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    window.copyTableToClipboard = () => {
-      const aoa = generateExportData();
-      const text = aoa.map(row => row.join('\t')).join('\n');
-      navigator.clipboard.writeText(text).then(() => {
-        showToast("クリップボードにコピーしました！");
-      }).catch(err => {
-        alert("コピーに失敗しました: " + err);
-      });
+    // LINE画像転送処理（Web Share API / 画像共有）
+    window.sendToLine = async () => {
+      const container = document.getElementById('previewTableContainer');
+      if (!container) return;
+
+      showToast("画像を生成中...");
+
+      try {
+        const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff' });
+        
+        canvas.toBlob(async (blob) => {
+          if (!blob) return alert("画像の生成に失敗しました");
+
+          const file = new File([blob], `RowingResult_${Date.now()}.png`, { type: 'image/png' });
+
+          // Web Share API（スマホ等の画像直接共有機能）
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({
+                title: 'Rowing 計測結果',
+                text: '計測結果画像',
+                files: [file]
+              });
+              return;
+            } catch (err) {
+              if (err.name !== 'AbortError') console.error(err);
+            }
+          }
+
+          // 非対応環境用のフォールバック（画像保存＋LINEテキスト連携）
+          const link = document.createElement('a');
+          link.download = `RowingResult_${Date.now()}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+
+          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像をダウンロードしました。')}`;
+          window.open(lineUrl, '_blank');
+          showToast("画像を保存しました。LINEへ遷移します。");
+        }, 'image/png');
+      } catch (e) {
+        alert("画像転送処理でエラーが発生しました。");
+      }
     };
 
     function renderStructure() {
@@ -892,17 +818,14 @@
         if (!existingCards.has(id)) {
           const card = document.createElement('div');
           card.setAttribute('data-id', id);
-          // 縦幅を最小限の92pxに固定 (h-[92px] min-h-[92px] max-h-[92px] overflow-hidden)
-          card.className = "h-[92px] min-h-[92px] max-h-[92px] bg-white rounded-lg shadow-sm border border-slate-200 p-1.5 flex flex-col justify-between relative overflow-hidden transition-all";
+          card.className = "h-[92px] min-h-[92px] max-h-[92px] bg-white rounded-lg shadow-sm border border-slate-200 p-1.5 flex flex-col justify-between relative overflow-hidden";
           app.appendChild(card);
         }
       });
 
       app.querySelectorAll('[data-id]').forEach(card => {
         const id = card.getAttribute('data-id');
-        if (!state.stopwatches[id]) {
-          card.remove();
-        }
+        if (!state.stopwatches[id]) card.remove();
       });
 
       keys.forEach(id => {
@@ -913,56 +836,51 @@
         const isChecked = selectedIds.has(id);
         const laps = sw.laps || [];
         const latestLap = laps.length > 0 ? laps[laps.length - 1] : null;
-        const lapIndex = laps.length;
 
         let lapDisplayHtml = '';
         if (latestLap) {
           lapDisplayHtml = `
-            <div class="flex justify-between items-center text-[9px] font-mono leading-none font-bold text-slate-700">
-              <span class="text-blue-600">P${lapIndex}</span>
+            <div class="flex justify-between items-center text-[9px] font-mono leading-none font-bold">
+              <span class="text-blue-600">P${laps.length}</span>
               <span class="text-blue-600">L:${latestLap.lapTime}</span>
               <span class="text-slate-800">S:${latestLap.splitTime}</span>
             </div>
           `;
         } else {
-          lapDisplayHtml = `
-            <div class="text-[8px] text-slate-300 text-center leading-none">記録なし</div>
-          `;
+          lapDisplayHtml = `<div class="text-[8px] text-slate-300 text-center leading-none">記録なし</div>`;
         }
 
         card.innerHTML = `
-          <!-- 1. ヘッダー (高さ約18px) -->
+          <!-- ヘッダー -->
           <div class="flex items-center justify-between gap-1 border-b border-slate-100 pb-0.5 h-[18px] shrink-0">
             <div class="flex items-center gap-1 flex-1 min-w-0">
-              <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3 h-3 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
-              <input type="text" value="${sw.name || ''}" onchange="updateName('${id}', this.value)" class="font-bold text-[11px] text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none w-full truncate leading-none">
+              <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3 h-3 text-blue-600 rounded">
+              <input type="text" value="${sw.name || ''}" onchange="updateName('${id}', this.value)" class="font-bold text-[11px] bg-transparent border-b border-transparent focus:border-blue-500 w-full truncate leading-none">
             </div>
-            <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5 rounded transition">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
+            <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5">✕</button>
           </div>
 
-          <!-- 2. タイム表示 (高さ約20px) -->
+          <!-- タイム表示 (mm:ss.00) -->
           <div class="text-center h-[20px] shrink-0 flex items-center justify-center">
             <div id="time-${id}" class="text-lg font-black font-mono tracking-tight text-slate-800 leading-none">
               ${formatTime(getElapsedTime(sw))}
             </div>
           </div>
 
-          <!-- 3. 操作ボタン (高さ約18px) -->
+          <!-- ボタン -->
           <div class="grid grid-cols-3 gap-1 h-[18px] shrink-0">
-            <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+            <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500' : 'bg-emerald-500'} text-white font-bold rounded text-[9px] leading-none">
               ${sw.isRunning ? 'STOP' : 'START'}
             </button>
-            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:hover:bg-blue-500 text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="bg-blue-500 disabled:opacity-40 text-white font-bold rounded text-[9px] leading-none">
               LAP
             </button>
-            <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="bg-slate-500 hover:bg-slate-600 disabled:opacity-40 disabled:hover:bg-slate-500 text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+            <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="bg-slate-500 disabled:opacity-40 text-white font-bold rounded text-[9px] leading-none">
               RESET
             </button>
           </div>
 
-          <!-- 4. 最新LAP/SPLIT表示 (高さ約18px) -->
+          <!-- 最新LAP / SPLIT表示 -->
           <div class="bg-slate-50 rounded border border-slate-100 px-1 py-0.5 shrink-0 flex items-center justify-center h-[18px]">
             <div class="w-full">
               ${lapDisplayHtml}
@@ -972,7 +890,6 @@
       });
     }
 
-    // 画面表示（タイム）のリアルタイム更新ループ
     function updateDisplays() {
       Object.keys(state.stopwatches).forEach(id => {
         const sw = state.stopwatches[id];
