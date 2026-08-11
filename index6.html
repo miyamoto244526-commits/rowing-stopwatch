@@ -3,25 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rowing マルチストップウォッチ</title>
+  <title>Rowing マルチストップウォッチ ver2</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PeerJS for P2P Realtime Sync -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <!-- SheetJS for Excel & CSV Export -->
+  <!-- SheetJS for Excel Export -->
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <!-- html2canvas for Image Generation -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     button, input, label, select {
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
-    .no-scrollbar::-webkit-scrollbar {
-      display: none;
-    }
-    .no-scrollbar {
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen pb-10 text-slate-800 antialiased selection:bg-blue-200">
@@ -129,12 +126,6 @@
         <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-2 py-1 rounded shadow-sm">
           Excel出力
         </button>
-        <button onclick="exportCsv()" class="bg-teal-600 hover:bg-teal-700 text-white font-bold px-2 py-1 rounded shadow-sm">
-          CSV出力
-        </button>
-        <button onclick="shareLine()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold px-2 py-1 rounded shadow-sm">
-          LINE転送
-        </button>
       </div>
     </header>
 
@@ -147,18 +138,22 @@
     <div id="previewModal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-2">
       <div class="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
         <div class="p-3 bg-slate-800 text-white flex items-center justify-between">
-          <h3 class="font-bold text-sm">計測データプレビュー (SPLIT)</h3>
+          <h3 class="font-bold text-sm">計測データプレビュー (SPLITのみ)</h3>
           <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white p-1">✕</button>
         </div>
-        <div class="p-3 overflow-auto flex-1 bg-slate-50">
-          <div id="previewTableContainer" class="bg-white rounded border border-slate-200"></div>
+        <div class="p-3 overflow-auto flex-1 bg-slate-50 flex justify-center items-start">
+          <div id="previewTableContainer" class="bg-white rounded p-3 border border-slate-200 inline-block"></div>
         </div>
-        <div class="p-2.5 bg-white border-t border-slate-200 flex justify-between text-xs">
-          <button onclick="copyTableToClipboard()" class="bg-indigo-600 text-white font-bold px-3 py-1.5 rounded">クリップボード複製</button>
-          <div class="flex gap-1.5">
-            <button onclick="exportExcel()" class="bg-emerald-700 text-white font-bold px-2.5 py-1.5 rounded">Excel保存</button>
-            <button onclick="closePreviewModal()" class="bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded">閉じる</button>
-          </div>
+        <div class="p-2.5 bg-white border-t border-slate-200 flex justify-end items-center text-xs gap-1.5 flex-wrap">
+          <button onclick="exportExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-1.5 rounded flex items-center gap-1">
+            Excel保存
+          </button>
+          <button onclick="sendToLine()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold px-3 py-1.5 rounded flex items-center gap-1 shadow-sm">
+            <span>LINE画像転送</span>
+          </button>
+          <button onclick="closePreviewModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded">
+            閉じる
+          </button>
         </div>
       </div>
     </div>
@@ -257,7 +252,6 @@
       document.getElementById('joinModal').classList.remove('hidden');
     }
 
-    // P2P通信のクリーンアップ処理
     function cleanupP2P() {
       if (hostConn) {
         try { hostConn.close(); } catch (e) {}
@@ -280,7 +274,6 @@
       document.getElementById('roomCodeDisplay').innerText = roomCode;
       document.getElementById('joinModal').classList.add('hidden');
 
-      // 既存接続・状態のリセット
       cleanupP2P();
       state = { stopwatches: {} };
       selectedIds.clear();
@@ -288,7 +281,6 @@
 
       hostPeerId = `rowing-app-room-v23-${roomCode}`;
       
-      // PeerJSサーバー側の接続リセット待ち(200ms)
       setTimeout(() => {
         initP2P();
       }, 200);
@@ -333,7 +325,6 @@
         peer.on('error', (err) => {
           if (err.type === 'unavailable-id') {
             isHost = false;
-            // 他の端末がすでにホストとして存在する場合はクライアントとして参加
             if (peer) {
               try { peer.destroy(); } catch(e){}
             }
@@ -615,7 +606,7 @@
       dispatchAction({ type: 'BATCH_STOP', ids: Array.from(selectedIds) });
     };
 
-    // mm:ss.00 フォーマット設定
+    // mm:ss.00 フォーマット
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -674,12 +665,7 @@
       });
     };
 
-    window.shareLine = () => {
-      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      const msg = `【Rowingマルチストップウォッチ】\n共有ID: ${roomCode}\n${shareUrl}`;
-      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
-    };
-
+    // 出力データ生成（SPLITのみを出力）
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -687,7 +673,7 @@
         if (lCount > maxLaps) maxLaps = lCount;
       });
 
-      const header = ['艇名', '種別'];
+      const header = ['艇名', '項目'];
       for (let i = 1; i <= maxLaps; i++) {
         header.push(`P${i}`);
       }
@@ -698,7 +684,8 @@
         const splitRow = [sw.name, 'SPLIT'];
 
         if (laps.length === 0) {
-          splitRow.push(formatTime(getElapsedTime(sw)));
+          const cur = formatTime(getElapsedTime(sw));
+          splitRow.push(cur);
         } else {
           laps.forEach(lap => {
             splitRow.push(lap.splitTime);
@@ -710,30 +697,16 @@
       return aoa;
     }
 
-    function createOptimizedWorksheet(aoa, isCsv = false) {
-      const processedAoa = aoa.map((row, rIdx) => {
-        if (rIdx === 0) return row;
-        return row.map((cell, cIdx) => {
-          if (cIdx >= 2 && typeof cell === 'string' && cell.match(/^\d{2}:\d{2}\.\d{2}$/)) {
-            return isCsv ? `="${cell}"` : cell;
-          }
-          return cell;
-        });
-      });
-
-      const ws = XLSX.utils.aoa_to_sheet(processedAoa, { raw: true });
-      Object.keys(ws).forEach(key => {
-        if (key[0] !== '!') ws[key].t = 's';
-      });
-
-      if (processedAoa.length > 0) {
-        const colWidths = processedAoa[0].map((_, colIdx) => {
+    function createOptimizedWorksheet(aoa) {
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      if (aoa.length > 0) {
+        const colWidths = aoa[0].map((_, colIdx) => {
           let maxLen = 0;
-          processedAoa.forEach(row => {
-            const val = row[colIdx] ? String(row[colIdx]).replace(/^="|"$/g, '') : '';
+          aoa.forEach(row => {
+            const val = row[colIdx] ? String(row[colIdx]) : '';
             if (val.length > maxLen) maxLen = val.length;
           });
-          return { wch: Math.max(maxLen + 3, 6) };
+          return { wch: Math.max(maxLen + 2, 5) };
         });
         ws['!cols'] = colWidths;
       }
@@ -744,51 +717,42 @@
       const keys = Object.keys(state.stopwatches);
       if (keys.length === 0) return alert("出力するデータがありません");
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, false);
+      const ws = createOptimizedWorksheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Result");
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    window.exportCsv = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
+    // プレビュー画面のHTML生成（SPLITのみ表示）
+    function renderPreviewTableHtml() {
       const aoa = generateExportData();
-      const ws = createOptimizedWorksheet(aoa, true);
-      const csv = XLSX.utils.sheet_to_csv(ws);
-      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = getDefaultFileName('csv');
-      a.click();
-      URL.revokeObjectURL(url);
-    };
-
-    window.openPreviewModal = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("表示するデータがありません");
-
-      const aoa = generateExportData();
-      const container = document.getElementById('previewTableContainer');
-
-      let tableHtml = `<table class="w-auto text-xs text-left border-collapse"><thead><tr class="bg-slate-100 font-bold border-b border-slate-300">`;
+      let tableHtml = `<div class="p-2 bg-white rounded shadow-sm inline-block"><h2 class="text-xs font-bold text-slate-800 mb-1.5">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
+      tableHtml += `<table class="table-auto text-[11px] text-center border-collapse border border-slate-300"><thead><tr class="bg-slate-200 font-bold border-b border-slate-300">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th class="p-2 border-r border-slate-200 whitespace-nowrap">${col}</th>`;
+        tableHtml += `<th class="px-1.5 py-0.5 border border-slate-300 text-slate-800 whitespace-nowrap">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
       for (let i = 1; i < aoa.length; i++) {
-        tableHtml += `<tr class="border-b border-slate-200">`;
-        aoa[i].forEach((cell, cellIdx) => {
+        const row = aoa[i];
+        const bgClass = 'bg-white font-semibold text-slate-800';
+        tableHtml += `<tr class="${bgClass} border-b border-slate-200">`;
+        row.forEach((cell, cellIdx) => {
           const fontClass = cellIdx >= 2 ? 'font-mono' : 'font-bold';
-          tableHtml += `<td class="p-2 border-r border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
+          const alignClass = cellIdx === 0 ? 'text-left px-1.5 py-0.5' : 'text-center px-1 py-0.5';
+          tableHtml += `<td class="${alignClass} border border-slate-200 whitespace-nowrap ${fontClass}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
       }
-      tableHtml += `</tbody></table>`;
+      tableHtml += `</tbody></table></div>`;
+      return tableHtml;
+    }
 
-      container.innerHTML = tableHtml;
+    window.openPreviewModal = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("表示するデータがありません");
+      const container = document.getElementById('previewTableContainer');
+      container.innerHTML = renderPreviewTableHtml();
       document.getElementById('previewModal').classList.remove('hidden');
     };
 
@@ -796,12 +760,48 @@
       document.getElementById('previewModal').classList.add('hidden');
     };
 
-    window.copyTableToClipboard = () => {
-      const aoa = generateExportData();
-      const text = aoa.map(row => row.join('\t')).join('\n');
-      navigator.clipboard.writeText(text).then(() => {
-        showToast("クリップボードにコピーしました！");
-      });
+    // LINE画像転送処理（Web Share API / 画像共有）
+    window.sendToLine = async () => {
+      const container = document.getElementById('previewTableContainer');
+      if (!container) return;
+
+      showToast("画像を生成中...");
+
+      try {
+        const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff' });
+        
+        canvas.toBlob(async (blob) => {
+          if (!blob) return alert("画像の生成に失敗しました");
+
+          const file = new File([blob], `RowingResult_${Date.now()}.png`, { type: 'image/png' });
+
+          // Web Share API（画像共有対応端末/スマホ等）
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
+              await navigator.share({
+                title: 'Rowing 計測結果',
+                text: '計測結果画像',
+                files: [file]
+              });
+              return;
+            } catch (err) {
+              if (err.name !== 'AbortError') console.error(err);
+            }
+          }
+
+          // 非対応ブラウザ等のフォールバック（画像ダウンロード ＆ LINEテキストシェアURLの案内）
+          const link = document.createElement('a');
+          link.download = `RowingResult_${Date.now()}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+
+          const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent('Rowing計測結果画像をダウンロードしました。')}`;
+          window.open(lineUrl, '_blank');
+          showToast("画像を保存しました。LINEへ遷移します。");
+        }, 'image/png');
+      } catch (e) {
+        alert("画像転送処理でエラーが発生しました。");
+      }
     };
 
     function renderStructure() {
