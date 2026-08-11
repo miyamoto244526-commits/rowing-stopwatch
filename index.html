@@ -793,14 +793,14 @@
       XLSX.writeFile(wb, getDefaultFileName('xlsx'));
     };
 
-    // プレビュー表示用HTML生成（インラインスタイル固定）
+    // プレビュー表示用HTML生成（インラインスタイル固定・垂直中央揃え対応）
     function renderPreviewTableHtml() {
       const aoa = generateExportData();
       let tableHtml = `<div id="captureTarget" style="background-color: #ffffff; color: #000000; padding: 16px; border-radius: 8px; border: 1px solid #cbd5e1; display: inline-block;">`;
       tableHtml += `<h2 style="font-size: 14px; font-weight: bold; color: #0f172a; margin-bottom: 10px; font-family: sans-serif;">Rowing 計測結果表 (${new Date().toLocaleString('ja-JP')})</h2>`;
       tableHtml += `<table style="border-collapse: collapse; font-size: 11px; text-align: center; background-color: #ffffff; font-family: sans-serif;"><thead><tr style="background-color: #e2e8f0; font-weight: bold;">`;
       aoa[0].forEach(col => {
-        tableHtml += `<th style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap;">${col}</th>`;
+        tableHtml += `<th style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; line-height: 1.2;">${col}</th>`;
       });
       tableHtml += `</tr></thead><tbody>`;
 
@@ -811,7 +811,7 @@
         row.forEach((cell, cellIdx) => {
           const fontStyle = cellIdx >= 2 ? 'font-family: monospace; font-weight: bold;' : 'font-weight: bold;';
           const alignStyle = cellIdx === 0 ? 'text-align: left;' : 'text-align: center;';
-          tableHtml += `<td style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; ${alignStyle} ${fontStyle}">${cell || ''}</td>`;
+          tableHtml += `<td style="padding: 6px 12px; border: 1px solid #cbd5e1; color: #0f172a; white-space: nowrap; vertical-align: middle; line-height: 1.2; ${alignStyle} ${fontStyle}">${cell || ''}</td>`;
         });
         tableHtml += `</tr>`;
       }
@@ -934,7 +934,7 @@
             }">
               ${sw.isRunning ? 'STOP' : 'START'}
             </button>
-            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-1.5 px-0.5 font-bold rounded-lg text-[10px] sm:text-xs text-slate-700 bg-slate-200 hover:bg-slate-300 shadow-sm transition active:scale-95 ${
+            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="py-1.5 px-0.5 font-bold rounded-lg text-[10px] sm:text-xs text-white bg-orange-500 hover:bg-orange-600 shadow-sm transition active:scale-95 ${
               !sw.isRunning ? 'opacity-50 cursor-not-allowed' : ''
             }">
               LAP
