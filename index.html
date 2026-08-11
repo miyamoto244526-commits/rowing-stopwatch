@@ -26,10 +26,41 @@
 </head>
 <body class="bg-slate-100 min-h-screen pb-10 text-slate-800 antialiased selection:bg-blue-200">
 
+  <!-- 初画面：共有ID入力・入室モーダル -->
+  <div id="joinModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 p-6 space-y-5">
+      <div class="text-center">
+        <h2 class="text-xl font-black text-slate-800 tracking-wide">Rowing マルチストップウォッチ</h2>
+        <p class="text-xs text-slate-500 mt-1">共有IDを入力して同期ルームに入室するか、新規作成してください</p>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">共有ID（ルーム名）</label>
+          <input type="text" id="roomInput" placeholder="例: tsuruga-2026" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <button onclick="submitJoin()" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold py-2.5 rounded-xl shadow-md transition active:scale-[0.98] text-sm">
+          入室 / 接続開始
+        </button>
+
+        <div class="relative flex py-1 items-center">
+          <div class="flex-grow border-t border-slate-200"></div>
+          <span class="flex-shrink mx-2 text-[10px] text-slate-400 font-bold uppercase">OR</span>
+          <div class="flex-grow border-t border-slate-200"></div>
+        </div>
+
+        <button onclick="createNewRoom()" class="w-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold py-2 rounded-xl border border-slate-300 transition text-xs">
+          新しい共有IDを自動生成して作成
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="max-w-[1600px] mx-auto px-2 pt-2">
 
     <!-- ヘッダー・操作コントロールバー -->
-    <header class="bg-white/95 backdrop-blur-md p-2 rounded-xl shadow-md border border-slate-200/80 mb-3 sticky top-1 z-30">
+    <header class="bg-white/95 backdrop-blur-md p-2 rounded-xl shadow-md border border-slate-200/80 mb-2 sticky top-1 z-30">
       
       <!-- 上段：ステータス・共有ID・全選択・選択START・選択STOP・艇数・補助操作 -->
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-1.5 mb-1.5 text-xs">
@@ -37,13 +68,13 @@
           <!-- 接続ステータス -->
           <span id="statusBadge" class="px-1.5 py-0.5 font-bold rounded-full bg-amber-100 text-amber-800 flex items-center gap-1 text-[10px] border border-amber-300">
             <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-            <span id="statusText">接続準備中...</span>
+            <span id="statusText">未接続</span>
           </span>
 
           <!-- 共有ID -->
           <div class="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px]">
             <span class="text-slate-500 font-medium">共有ID:</span>
-            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600"></span>
+            <span id="roomCodeDisplay" class="font-mono font-bold text-blue-600">-</span>
           </div>
 
           <!-- 全選択 -->
@@ -71,6 +102,9 @@
         </div>
 
         <div class="flex items-center gap-1">
+          <button onclick="reopenJoinModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition">
+            ID変更
+          </button>
           <button onclick="copyShareUrl()" class="bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-700 font-bold px-1.5 py-0.5 rounded text-[10px] transition active:scale-95">
             URLコピー
           </button>
@@ -187,6 +221,8 @@
     let peer = null;
     let hostConn = null;
     let clientConns = [];
+    let roomCode = '';
+    let hostPeerId = '';
 
     let lastSyncServerTime = Date.now();
     let lastSyncLocalTime = Date.now();
@@ -247,13 +283,43 @@
       }
     };
 
-    let roomCode = location.hash.replace('#', '');
-    if (!roomCode) {
-      roomCode = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
-      location.hash = roomCode;
+    // 画面ロード時処理
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlHash = location.hash.replace('#', '').trim();
+      if (urlHash) {
+        document.getElementById('roomInput').value = urlHash;
+      }
+    });
+
+    function submitJoin() {
+      const code = document.getElementById('roomInput').value.trim();
+      if (!code) return alert('共有IDを入力してください');
+      startAppWithRoom(code);
     }
-    document.getElementById('roomCodeDisplay').innerText = roomCode;
-    const hostPeerId = `rowing-app-room-v21-${roomCode}`;
+
+    function createNewRoom() {
+      const code = 'rowing-' + Math.floor(1000 + Math.random() * 9000);
+      document.getElementById('roomInput').value = code;
+      startAppWithRoom(code);
+    }
+
+    function reopenJoinModal() {
+      document.getElementById('joinModal').classList.remove('hidden');
+    }
+
+    function startAppWithRoom(code) {
+      roomCode = code;
+      location.hash = roomCode;
+      document.getElementById('roomCodeDisplay').innerText = roomCode;
+      document.getElementById('joinModal').classList.add('hidden');
+
+      if (peer) {
+        try { peer.destroy(); } catch (e) {}
+      }
+
+      hostPeerId = `rowing-app-room-v21-${roomCode}`;
+      initP2P();
+    }
 
     function getNow() {
       if (isHost) return Date.now();
@@ -267,6 +333,9 @@
         peer.on('open', () => {
           isHost = true;
           updateStatus('ホスト (親機)', 'bg-emerald-100 text-emerald-800 border-emerald-300');
+          if (Object.keys(state.stopwatches).length === 0) {
+            dispatchAction({ type: 'ADD' });
+          }
         });
 
         peer.on('disconnected', () => {
@@ -274,14 +343,22 @@
         });
 
         peer.on('connection', (conn) => {
+          clientConns = clientConns.filter(c => c && c.open && c.peer !== conn.peer);
           clientConns.push(conn);
+
           conn.on('open', () => {
             conn.send({ type: 'SYNC_STATE', state, serverTime: Date.now() });
             updateHostStatus();
           });
           conn.on('data', (data) => dispatchAction(data));
-          conn.on('close', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
-          conn.on('error', () => { clientConns = clientConns.filter(c => c !== conn); updateHostStatus(); });
+          conn.on('close', () => {
+            clientConns = clientConns.filter(c => c !== conn && c.open);
+            updateHostStatus();
+          });
+          conn.on('error', () => {
+            clientConns = clientConns.filter(c => c !== conn && c.open);
+            updateHostStatus();
+          });
         });
 
         peer.on('error', (err) => {
@@ -337,9 +414,15 @@
     setInterval(() => {
       if (peer && peer.disconnected && !peer.destroyed) peer.reconnect();
       if (isHost) {
+        clientConns = clientConns.filter(c => c && c.open);
         clientConns.forEach(conn => {
-          if (conn && conn.open) conn.send({ type: 'PING' });
+          try {
+            conn.send({ type: 'PING' });
+          } catch (e) {
+            clientConns = clientConns.filter(c => c !== conn);
+          }
         });
+        updateHostStatus();
       } else if (hostConn && hostConn.open) {
         hostConn.send({ type: 'PING' });
       }
@@ -357,8 +440,8 @@
 
     function updateHostStatus() {
       if (isHost) {
-        const count = clientConns.filter(c => c.open).length;
-        updateStatus(`ホスト (接続端末: ${count}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
+        const activePeers = new Set(clientConns.filter(c => c && c.open).map(c => c.peer));
+        updateStatus(`ホスト (接続端末: ${activePeers.size}台)`, 'bg-emerald-100 text-emerald-800 border-emerald-300');
       }
     }
 
@@ -595,15 +678,7 @@
       dispatchAction({ type: 'BATCH_STOP', ids: Array.from(selectedIds) });
     };
 
-    window.scrollLap = (id, direction) => {
-      const container = document.getElementById(`lapContainer-${id}`);
-      if (container) {
-        const lineHeight = 24;
-        container.scrollBy({ top: direction * lineHeight, behavior: 'smooth' });
-      }
-    };
-
-    // mm:ss.00 形式フォーマット (1/100秒まで表示)
+    // mm:ss.00 形式のミリ秒フォーマット関数
     function formatTime(ms) {
       if (!ms || ms < 0) ms = 0;
       const m = Math.floor(ms / 60000);
@@ -644,13 +719,30 @@
       renderStructure();
     };
 
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastMsg').innerText = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 2500);
+    }
+
+    window.copyShareUrl = () => {
+      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        showToast("共有URLをコピーしました！");
+      }).catch(() => {
+        prompt("共有URL:", shareUrl);
+      });
+    };
+
     window.shareLine = () => {
       const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
       const msg = `【Rowingマルチストップウォッチ】\nリアルタイム計測ルーム(ID: ${roomCode})に参加してください：\n${shareUrl}`;
       window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
     };
 
-    // 出力データ生成 (SPLIT行のみを出力)
     function generateExportData() {
       let maxLaps = 0;
       Object.values(state.stopwatches).forEach(sw => {
@@ -682,13 +774,12 @@
       return aoa;
     }
 
-    // Excel/CSV用のワークシート作成 (mm:ss.00表示の保持と列幅最適化)
     function createOptimizedWorksheet(aoa, isCsv = false) {
       const processedAoa = aoa.map((row, rIdx) => {
         if (rIdx === 0) return row;
         return row.map((cell, cIdx) => {
           if (cIdx >= 2 && typeof cell === 'string' && cell.match(/^\d{2}:\d{2}\.\d{2}$/)) {
-            return isCsv ? `="${cell}"` : cell; // CSV保存時にExcelで開いた際「.00」が消えないよう式化
+            return isCsv ? `="${cell}"` : cell;
           }
           return cell;
         });
@@ -719,6 +810,31 @@
       }
       return ws;
     }
+
+    window.exportExcel = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("出力するデータがありません");
+      const aoa = generateExportData();
+      const ws = createOptimizedWorksheet(aoa, false);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Result");
+      XLSX.writeFile(wb, getDefaultFileName('xlsx'));
+    };
+
+    window.exportCsv = () => {
+      const keys = Object.keys(state.stopwatches);
+      if (keys.length === 0) return alert("出力するデータがありません");
+      const aoa = generateExportData();
+      const ws = createOptimizedWorksheet(aoa, true);
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = getDefaultFileName('csv');
+      a.click();
+      URL.revokeObjectURL(url);
+    };
 
     window.openPreviewModal = () => {
       const keys = Object.keys(state.stopwatches);
@@ -754,193 +870,120 @@
 
     window.copyTableToClipboard = () => {
       const aoa = generateExportData();
-      const tsvText = aoa.map(row => row.join('\t')).join('\n');
-
-      navigator.clipboard.writeText(tsvText).then(() => {
+      const text = aoa.map(row => row.join('\t')).join('\n');
+      navigator.clipboard.writeText(text).then(() => {
         showToast("クリップボードにコピーしました！");
       }).catch(err => {
-        console.error("Copy failed:", err);
-        alert("コピーに失敗しました");
+        alert("コピーに失敗しました: " + err);
       });
     };
-
-    window.exportCsv = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
-      const defaultName = getDefaultFileName('csv');
-      const userInput = prompt("保存するCSVファイル名を入力してください:", defaultName);
-      if (userInput === null) return;
-      const fileName = userInput.trim() || defaultName;
-      const finalFileName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`;
-
-      try {
-        const aoa = generateExportData();
-        const ws = createOptimizedWorksheet(aoa, true);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-        XLSX.writeFile(wb, finalFileName, { bookType: 'csv' });
-      } catch (err) {
-        console.error("CSV Export error:", err);
-        alert("CSVの保存に失敗しました。");
-      }
-    };
-
-    window.exportExcel = () => {
-      const keys = Object.keys(state.stopwatches);
-      if (keys.length === 0) return alert("出力するデータがありません");
-      const defaultName = getDefaultFileName('xlsx');
-      const userInput = prompt("保存するExcelファイル名を入力してください:", defaultName);
-      if (userInput === null) return;
-      const fileName = userInput.trim() || defaultName;
-      const finalFileName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-      try {
-        const aoa = generateExportData();
-        const ws = createOptimizedWorksheet(aoa, false);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "計測結果");
-        XLSX.writeFile(wb, finalFileName);
-      } catch (err) {
-        console.error("Excel Export error:", err);
-        alert("Excelの保存に失敗しました。");
-      }
-    };
-
-    window.copyShareUrl = () => {
-      const shareUrl = `${location.origin}${location.pathname}#${roomCode}`;
-      navigator.clipboard.writeText(shareUrl).then(() => showToast("共有URLをコピーしました！")).catch(() => prompt("以下のURLをコピーしてください:", shareUrl));
-    };
-
-    function showToast(msg) {
-      const toast = document.getElementById('toast');
-      const toastMsg = document.getElementById('toastMsg');
-      if (toast && toastMsg) {
-        toastMsg.innerText = msg;
-        toast.classList.remove('translate-y-20', 'opacity-0');
-        setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 2500);
-      }
-    }
 
     function renderStructure() {
-      const container = document.getElementById("app");
+      const app = document.getElementById('app');
+      const countEl = document.getElementById('count');
       const keys = Object.keys(state.stopwatches);
-      document.getElementById("count").innerText = keys.length;
+      
+      if (countEl) countEl.innerText = keys.length;
 
-      const allSelected = keys.length > 0 && keys.every(id => selectedIds.has(id));
-      const selectAllEl = document.getElementById("selectAllCheckbox");
-      if (selectAllEl) selectAllEl.checked = allSelected;
+      const existingCards = new Set();
+      app.querySelectorAll('[data-id]').forEach(el => existingCards.add(el.getAttribute('data-id')));
 
-      if (keys.length === 0) {
-        container.innerHTML = `
-          <div class="col-span-full bg-white p-6 rounded-xl shadow-sm text-center border border-slate-200 py-10">
-            <p class="text-slate-700 font-bold text-sm mb-1">ストップウォッチがありません</p>
-            <p class="text-xs text-slate-400 mb-3">「追加」を押して作成してください（最大100個）</p>
-            <button onclick="addTimer()" class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-lg shadow text-xs">
-              追加
-            </button>
-          </div>
-        `;
-        return;
-      }
-
-      container.innerHTML = keys.map(id => {
-        const sw = state.stopwatches[id];
-        const laps = sw.laps || [];
-        const isSelected = selectedIds.has(id);
-
-        return `
-          <div class="bg-white p-2 rounded-xl shadow-sm border transition-all ${
-            sw.isRunning 
-              ? 'border-emerald-500 ring-2 ring-emerald-100' 
-              : isSelected 
-                ? 'border-blue-500 ring-2 ring-blue-100 bg-blue-50/10' 
-                : 'border-slate-200'
-          }">
-            
-            <div class="flex items-center justify-between gap-1 mb-1">
-              <div class="flex items-center gap-1 flex-1 min-w-0">
-                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer flex-shrink-0">
-                <input type="text" value="${sw.name}" onchange="updateName('${id}', this.value)" placeholder="艇名" class="font-bold text-slate-800 text-xs border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none w-full bg-transparent px-0.5 py-0.5 truncate">
-              </div>
-
-              <button onclick="deleteTimer('${id}')" title="削除" class="text-slate-300 hover:text-rose-500 p-0.5 rounded transition flex-shrink-0">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-              </button>
-            </div>
-
-            <div class="bg-slate-900 text-emerald-400 font-mono font-black text-base sm:text-xl md:text-2xl text-center py-1 px-1 rounded-lg my-1 shadow-inner border border-slate-800 tracking-tighter whitespace-nowrap overflow-hidden">
-              <span id="display-${id}">${formatTime(getElapsedTime(sw))}</span>
-            </div>
-
-            <div class="grid grid-cols-3 gap-1 my-1.5">
-              <button onclick="toggleStartWithSound('${id}')" class="min-h-[30px] rounded font-bold text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center ${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-600 hover:bg-emerald-700'}">
-                ${sw.isRunning ? 'STOP' : 'START'}
-              </button>
-              
-              <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="min-h-[30px] rounded font-bold bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed">
-                LAP
-              </button>
-
-              <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="min-h-[30px] rounded font-bold bg-slate-500 hover:bg-slate-600 text-white shadow active:scale-95 transition-all text-[10px] flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed">
-                RESET
-              </button>
-            </div>
-
-            <div class="border-t border-slate-100 pt-1">
-              <div class="flex items-center justify-between bg-slate-900 text-white rounded p-1 shadow-inner gap-1">
-                <div id="lapContainer-${id}" class="h-6 overflow-y-auto no-scrollbar scroll-smooth flex-1 font-mono text-[10px] snap-y snap-mandatory">
-                  ${laps.length === 0 ? 
-                    '<div class="h-6 flex items-center justify-center text-slate-500 font-sans text-[9px]">記録なし</div>' : 
-                    laps.slice().reverse().map((lap, idx) => {
-                      const lapNum = laps.length - idx;
-                      return `
-                        <div class="h-6 snap-start flex items-center justify-between px-1 ${lap.type === 'STOP' ? 'bg-rose-950/60 text-rose-300' : 'text-slate-200'}">
-                          <span class="font-bold text-[9px] text-slate-400 mr-1">#${lapNum}${lap.type === 'STOP' ? '(STOP)' : ''}</span>
-                          <div class="flex items-center gap-1.5 font-black tracking-tight">
-                            <span class="text-amber-400">L:${lap.lapTime}</span>
-                            <span class="text-slate-600">|</span>
-                            <span class="text-blue-400">S:${lap.splitTime}</span>
-                          </div>
-                        </div>
-                      `;
-                    }).join('')
-                  }
-                </div>
-
-                <div class="flex flex-col gap-0.5 flex-shrink-0">
-                  <button onclick="scrollLap('${id}', -1)" title="前のLAP" class="w-4 h-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-300 rounded-xs flex items-center justify-center text-[7px] leading-none transition">
-                    ▲
-                  </button>
-                  <button onclick="scrollLap('${id}', 1)" title="次のLAP" class="w-4 h-2.5 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-slate-300 rounded-xs flex items-center justify-center text-[7px] leading-none transition">
-                    ▼
-                  </button>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        `;
-      }).join('');
-    }
-
-    function tick() {
-      Object.keys(state.stopwatches).forEach(id => {
-        const sw = state.stopwatches[id];
-        if (sw && sw.isRunning) {
-          const displayEl = document.getElementById(`display-${id}`);
-          if (displayEl) {
-            displayEl.innerText = formatTime(getElapsedTime(sw));
-          }
+      keys.forEach(id => {
+        if (!existingCards.has(id)) {
+          const card = document.createElement('div');
+          card.setAttribute('data-id', id);
+          // 縦幅を最小限の92pxに固定 (h-[92px] min-h-[92px] max-h-[92px] overflow-hidden)
+          card.className = "h-[92px] min-h-[92px] max-h-[92px] bg-white rounded-lg shadow-sm border border-slate-200 p-1.5 flex flex-col justify-between relative overflow-hidden transition-all";
+          app.appendChild(card);
         }
       });
-      requestAnimationFrame(tick);
+
+      app.querySelectorAll('[data-id]').forEach(card => {
+        const id = card.getAttribute('data-id');
+        if (!state.stopwatches[id]) {
+          card.remove();
+        }
+      });
+
+      keys.forEach(id => {
+        const sw = state.stopwatches[id];
+        const card = app.querySelector(`[data-id="${id}"]`);
+        if (!card) return;
+
+        const isChecked = selectedIds.has(id);
+        const laps = sw.laps || [];
+        const latestLap = laps.length > 0 ? laps[laps.length - 1] : null;
+        const lapIndex = laps.length;
+
+        let lapDisplayHtml = '';
+        if (latestLap) {
+          lapDisplayHtml = `
+            <div class="flex justify-between items-center text-[9px] font-mono leading-none font-bold text-slate-700">
+              <span class="text-blue-600">P${lapIndex}</span>
+              <span class="text-blue-600">L:${latestLap.lapTime}</span>
+              <span class="text-slate-800">S:${latestLap.splitTime}</span>
+            </div>
+          `;
+        } else {
+          lapDisplayHtml = `
+            <div class="text-[8px] text-slate-300 text-center leading-none">記録なし</div>
+          `;
+        }
+
+        card.innerHTML = `
+          <!-- 1. ヘッダー (高さ約18px) -->
+          <div class="flex items-center justify-between gap-1 border-b border-slate-100 pb-0.5 h-[18px] shrink-0">
+            <div class="flex items-center gap-1 flex-1 min-w-0">
+              <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelect('${id}')" class="w-3 h-3 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+              <input type="text" value="${sw.name || ''}" onchange="updateName('${id}', this.value)" class="font-bold text-[11px] text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:bg-white focus:outline-none w-full truncate leading-none">
+            </div>
+            <button onclick="deleteTimer('${id}')" class="text-slate-400 hover:text-rose-500 p-0.5 rounded transition">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
+
+          <!-- 2. タイム表示 (高さ約20px) -->
+          <div class="text-center h-[20px] shrink-0 flex items-center justify-center">
+            <div id="time-${id}" class="text-lg font-black font-mono tracking-tight text-slate-800 leading-none">
+              ${formatTime(getElapsedTime(sw))}
+            </div>
+          </div>
+
+          <!-- 3. 操作ボタン (高さ約18px) -->
+          <div class="grid grid-cols-3 gap-1 h-[18px] shrink-0">
+            <button onclick="toggleStartWithSound('${id}')" class="${sw.isRunning ? 'bg-rose-500 hover:bg-rose-600' : 'bg-emerald-500 hover:bg-emerald-600'} text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+              ${sw.isRunning ? 'STOP' : 'START'}
+            </button>
+            <button onclick="addLapWithSound('${id}')" ${!sw.isRunning ? 'disabled' : ''} class="bg-blue-500 hover:bg-blue-600 disabled:opacity-40 disabled:hover:bg-blue-500 text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+              LAP
+            </button>
+            <button onclick="resetTimerWithSound('${id}')" ${sw.isRunning ? 'disabled' : ''} class="bg-slate-500 hover:bg-slate-600 disabled:opacity-40 disabled:hover:bg-slate-500 text-white font-bold rounded text-[9px] transition active:scale-95 shadow-xs flex items-center justify-center leading-none">
+              RESET
+            </button>
+          </div>
+
+          <!-- 4. 最新LAP/SPLIT表示 (高さ約18px) -->
+          <div class="bg-slate-50 rounded border border-slate-100 px-1 py-0.5 shrink-0 flex items-center justify-center h-[18px]">
+            <div class="w-full">
+              ${lapDisplayHtml}
+            </div>
+          </div>
+        `;
+      });
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      initP2P();
-      renderStructure();
-      requestAnimationFrame(tick);
-    });
+    // 画面表示（タイム）のリアルタイム更新ループ
+    function updateDisplays() {
+      Object.keys(state.stopwatches).forEach(id => {
+        const sw = state.stopwatches[id];
+        const timeEl = document.getElementById(`time-${id}`);
+        if (timeEl && sw && sw.isRunning) {
+          timeEl.innerText = formatTime(getElapsedTime(sw));
+        }
+      });
+      requestAnimationFrame(updateDisplays);
+    }
+    requestAnimationFrame(updateDisplays);
   </script>
 </body>
 </html>
